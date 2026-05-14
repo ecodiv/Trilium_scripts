@@ -81,7 +81,7 @@ The planner scans every text note in the whole Trilium database for lines that s
 
 Prefixes are case-sensitive and must be followed by a space. They must appear at the start of a paragraph, at the start of a list item, or after a `<br>`. Anything else, such as `My TODO list:` in prose, is ignored.
 
-Archived notes are included in the scan by default. To exclude archived notes, set `#scanArchived=false` in the settings section of the JSON file.
+Archived notes are included in the scan by default. To exclude archived notes, add the tag `#scanArchived=false` as attribute of the weekplanner note.
 
 > [!IMPORTANT]
 > A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task can make the planner treat it as a new task, so the planned day may be lost.
@@ -211,7 +211,7 @@ You do not normally need to edit this note. The main exception is when you want 
 | `#weekplanner_idea=<colour>` | Overrides the `IDEA` chip colour. Default: blue. |
 | `#weekplanner_check=<colour>` | Overrides the `CHECK` chip colour. Default: green. |
 | `#weekplanner_toread=<colour>` | Overrides the `TOREAD` chip colour. Default: purple. |
-| `#scanArchived=false/true` | Archived notes are scanned. Override if they should not |
+| `#scanArchived=false/true` | Archived notes are scanned. Override if they should not - not yet implemented |
 
 The user can also set the Backlog width interactively by dragging the right edge of the Backlog column. The dragged value is saved into the `#plannerdata` JSON and takes precedence over `#backlogWidth` until the saved value is cleared.
 
