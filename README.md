@@ -142,10 +142,6 @@ Clicking anywhere else on the card opens the source note. The default action ope
 
 Each card has a thin progress bar along its bottom edge. Click the bar to advance progress in 25% steps: 0 → 25 → 50 → 75 → 0. The bar is purely a visual way to track progress. The ✓ button is the only way to mark a task done. This will marked the task as done, greyed in its source note, and removed from the planner.
 
-![](images/progress.png)
-
-_Figure 3. Progress bar. The current percentage is shown as a small label above the bar when you hover over it._
-
 Progress is stored only in the `#plannerdata` JSON, under the `_progress` key. The source note is never modified for partial progress — only the final completion at 100% writes back to the source. Progress survives reloads and is preserved when dragging cards between days.
 
 > [!NOTE]
