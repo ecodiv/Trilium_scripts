@@ -41,7 +41,7 @@ Task Planner is a weekly planner for [Trilium Notes](https://triliumnotes.org/),
 
 Type e.g., `TODO buy milk` anywhere in a daily note, meeting note, or project note. The task appears in the planner. Drag it to a day column to schedule it. Mark it done from the planner, and the original source line is greyed out in place.
 
-The planner supports four task types: `TODO`, `IDEA`, `CHECK`, and `TOREAD`. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
+The planner supports four task types: `TODO`, `IDEA`, `CHECK`, `DEFER` and `TOREAD`. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
 
 ![](images/overview.png)
 
@@ -118,6 +118,7 @@ The planner scans every text note in the whole Trilium database for lines that s
 | `IDEA` | Captured thought | blue |
 | `CHECK` | To verify or review | green |
 | `TOREAD` | Reading queue | purple |
+| `DEFER` | Follow up later | teal |
 
 Prefixes are case-sensitive and must be followed by a space. They must appear at the start of a paragraph, at the start of a list item, or after a `<br>`. Anything else, such as `My TODO list:` in prose, is ignored.
 
@@ -192,7 +193,7 @@ TODO call mom #personal
 TODO deploy staging #work #urgent
 ```
 
-Tags display as small grey pills on the card and feed the filter dropdown. Tags must start with a letter and can include letters, digits, underscores, and hyphens. Tags stay in the source note and do not move.
+Tags display in light grey inline within the task text, in the same position you typed them. They feed the filter dropdown but are not duplicated below the card. Tags must start with a letter and can include letters, digits, underscores, and hyphens. 
 
 ### Filtering
 
@@ -207,7 +208,7 @@ Click the **Filter** button in the top-right of the planner header. The dropdown
 | Filter type | Behaviour |
 | --- | --- |
 | Kinds | Checkboxes for each prefix type that has at least one task. Toggle them to hide or show task kinds. |
-| Tags | Checkboxes for every tag found across all tasks. Multiple selected tags are combined with AND, so a task must have all selected tags to show. |
+| Tags | Checkboxes for every tag found across all tasks. The header of the Tags section has a small `AND`/`OR` toggle that switches how multiple selected tags combine: **AND** means a task must have all selected tags; **OR** means a task must have at least one. The mode is persisted and defaults to AND. |
 
 If no kinds are selected, all kinds show. If no tags are selected, tag filtering is off. The active filter count appears as a small blue badge on the Filter button. **Clear filters** resets both kind and tag filters.
 
@@ -247,6 +248,7 @@ All settings are labels you add to the `#plannerdata` note. They all share the `
 | `#wp_idea=<colour>` | Overrides the `IDEA` chip colour. Default: blue. |
 | `#wp_check=<colour>` | Overrides the `CHECK` chip colour. Default: green. |
 | `#wp_toread=<colour>` | Overrides the `TOREAD` chip colour. Default: purple. |
+| `#wp_defer=<colour>` | Overrides the `DEFER` chip colour. Default: teal. |
 | `#wp_bg_task=<colour>` | Background colour of task cards. Default: `#f3f3f3`. |
 | `#wp_bg_panel=<colour>` | Background colour of the day and Backlog columns. Default: `#fafafa`. |
 | `#wp_color_done_text=<colour>` | Colour applied to the grey-out span around finished `DONE` lines in source notes. Default: `#cfcfcf`. |

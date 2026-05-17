@@ -10,6 +10,7 @@
  *   • IDEA   <text>   — captured thought    (blue)
  *   • CHECK  <text>   — to verify / review  (green)
  *   • TOREAD <text>   — reading queue       (purple)
+ *   • DEFER <text>   — Follow up later       (teal)
  *
  * Prefixes are case-sensitive, must be at the start of a line/block,
  * and must be followed by a space. Mark-done wraps the line in
@@ -42,6 +43,7 @@
  *          #wp_idea=#348cbb          override IDEA chip color
  *          #wp_check=#42ae2e         override CHECK chip color
  *          #wp_toread=#9d4edd        override TOREAD chip color
+ *          #wp_defer=#008080         override DEFER chip color
  *        Theme (any CSS color string):
  *          #wp_bg_task=#f3f3f3          task card background
  *          #wp_bg_panel=#fafafa         column / panel background
@@ -63,13 +65,13 @@ const KINDS = {
     IDEA:   { label: 'IDEA',   color: '#348cbb' },
     CHECK:  { label: 'CHECK',  color: '#42ae2e' },
     TOREAD: { label: 'TOREAD', color: '#9d4edd' },
+    DEFER:  { label: 'DEFER',  color: '#589393' },
 };
 const KIND_KEYS = Object.keys(KINDS);
 const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
 
 /* Color overrides come from labels on the #plannerdata note:
-   #wp_todo, #wp_idea, #wp_check, #wp_toread.
-   The override map is threaded through props to any component that needs it. */
+   #wp_todo, #wp_idea, #wp_check, #wp_toread.*/
 function getKindColor(kind, overrides) {
     if (overrides && overrides[kind]) return overrides[kind];
     return KINDS[kind]?.color || '#666';
@@ -142,9 +144,7 @@ function tokenToIsoDate(token, baseDate) {
 /* Extracts @date and #tags from raw task text.
    Returns { isoDate, tags } where:
      isoDate = null or 'YYYY-MM-DD'
-     tags    = string[] of lowercase tag names (without #)
-   The @suffix and #tags both remain in the original task text — they're
-   styled in place by the renderer, not stripped. */
+     tags    = string[] of lowercase tag names (without #)*/
 function parseTaskMeta(rawText) {
     const tags = [];
     const tagRe = /#([a-zA-Z][\w-]*)/g;
@@ -191,9 +191,6 @@ async function loadPlannerData() {
         }
 
         // #wp_scan_archived → explicit override of SCAN_ARCHIVED_DEFAULT.
-        //   false/no/0/off  → skip archived notes
-        //   true/yes/1/on   → scan archived notes
-        //   (any other value or missing → fall back to default)
         let scanArchived = defaultScanArchived;
         const scanLabel = labelStr('wp_scan_archived');
         if (scanLabel != null) {
@@ -203,12 +200,12 @@ async function loadPlannerData() {
         }
 
         // Per-kind color overrides:
-        //   #wp_todo, #wp_idea, #wp_check, #wp_toread
         const kindLabelMap = {
             TODO:   'wp_todo',
             IDEA:   'wp_idea',
             CHECK:  'wp_check',
             TOREAD: 'wp_toread',
+            DEFER:  'wp_defer',
         };
         const colorOverrides = {};
         for (const kind in kindLabelMap) {
@@ -265,14 +262,7 @@ function buildPrefixGlobClause() {
     return KIND_KEYS.map(k => `b.content GLOB '*${k} *'`).join(' OR ');
 }
 
-/* Scan all text notes for prefixed lines.
-   Uses a SQL prefilter against the `blobs` table so notes containing no
-   prefix are excluded before any JavaScript scanning. Falls back to a
-   plain SELECT against `notes` if the JOIN form fails (older Trilium
-   versions that store content differently).
-   If `scanArchived` is false, notes that Trilium considers archived
-   (either via a direct #archived label or one inherited from an ancestor)
-   are skipped. */
+/* Scan all text notes for prefixed lines.*/
 async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
     const kindRe = KIND_RE_SOURCE;
     const prefixClause = buildPrefixGlobClause();
@@ -320,7 +310,6 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
             );
         } catch (err) {
             // Fallback for unexpected schema differences: plain SELECT,
-            // the in-JS scanner will reject prefix-less notes by itself.
             rows = api.sql.getRows(
                 "SELECT noteId, title FROM notes " +
                 "WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text' " +
@@ -346,8 +335,7 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
     return flattenGroups(groups);
 }
 
-/* Re-scan a single note. Returns a (possibly empty) array of tasks
-   in the same shape as fetchAllTasks. Used after mark-done and capture
+/* Re-scan a single note. Used after mark-done and capture
    to avoid a full database scan when we know which note changed. */
 async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
     const kindRe = KIND_RE_SOURCE;
@@ -393,8 +381,7 @@ async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT 
     return flattenGroups(groups);
 }
 
-/* Flatten {noteId, title, tasks:[...]} groups into the array shape used by
-   the UI: { id, kind, text, tags, isoDate, indexForKind, noteId, noteTitle }. */
+/* Flatten {noteId, title, tasks:[...]} groups */
 function flattenGroups(groups) {
     const all = [];
     for (const g of groups) {
@@ -505,14 +492,23 @@ function weekLabel(cols) {
 ══════════════════════════════════════════════════════════════════ */
 
 function applyFilters(tasks, filters) {
-    const { kinds, tags } = filters;
+    const { kinds, tags, tagMode } = filters;
     return tasks.filter(t => {
         // Kind filter: if no kinds selected (empty set), show all
         if (kinds && kinds.size > 0 && !kinds.has(t.kind)) return false;
-        // Tag filter (AND): every selected tag must be present
+        // Tag filter: AND requires every selected tag, OR requires any.
+        // Default to AND if tagMode isn't set (backward compat).
         if (tags && tags.size > 0) {
-            for (const tag of tags) {
-                if (!t.tags.includes(tag)) return false;
+            if (tagMode === 'OR') {
+                let any = false;
+                for (const tag of tags) {
+                    if (t.tags.includes(tag)) { any = true; break; }
+                }
+                if (!any) return false;
+            } else {
+                for (const tag of tags) {
+                    if (!t.tags.includes(tag)) return false;
+                }
             }
         }
         return true;
@@ -557,9 +553,7 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks) {
    CSS — light theme, kind colors
 ══════════════════════════════════════════════════════════════════ */
 
-/* Builds the planner's CSS for a given resolved theme.
-   Called once at startup with the resolved theme, then re-called only
-   when label-based overrides change (rare; mostly never within a session). */
+/* Builds the planner's CSS for a given resolved theme. */
 function buildStyle(theme) {
     return `
 .pl-root { display:flex; flex-direction:column; height:100%; overflow:hidden;
@@ -642,7 +636,7 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-filter-panel { position:fixed; z-index:9998;
                    background:#fff; border:1px solid #c8c8c8; border-radius:6px;
                    box-shadow:0 4px 12px rgba(0,0,0,.12);
-                   padding:10px 12px; min-width:200px;
+                   padding:10px 12px; min-width:200px; max-width:240px;
                    max-height:80vh; overflow-y:auto; }
 .pl-filter-panel h5 { margin:0 0 4px; font-size:12px;
                       text-transform:uppercase; letter-spacing:.05em;
@@ -770,10 +764,7 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
         catch (err) { console.error(err); setWorking(false); }
     };
 
-    // Progress click: cycle 0 → 25 → 50 → 75 → 100 → 0.
-    // Progress click cycles 0 → 25 → 50 → 75 → 0.
-    // The bar deliberately does NOT reach 100 — completion is the ✓ button's job,
-    // so a misclick on the bar can't accidentally mark a task done.
+    // Progress click: cycle 0 → 25 → 50 → 75 → 0.
     const handleProgressClick = (e) => {
         e.stopPropagation();
         const current = progress || 0;
@@ -913,6 +904,7 @@ function CapturePanel({ onCapture, working }) {
 function FilterDropdown({ allTasks, filters, onChange, overrides }) {
     const [open, setOpen] = useState(false);
     const wrapRef = useRef(null);
+    const [panelPos, setPanelPos] = useState(null);
 
     // Close on outside click
     useEffect(() => {
@@ -922,6 +914,22 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    // Compute panel position whenever it opens.
+    useEffect(() => {
+        if (!open) {
+            setPanelPos(null);
+            return;
+        }
+        if (!wrapRef.current) return;
+        const btn = wrapRef.current.querySelector('button');
+        if (!btn) return;
+        const r = btn.getBoundingClientRect();
+        setPanelPos({
+            top:   r.bottom + 4,                          // 4px below the trigger
+            right: Math.max(8, window.innerWidth - r.right), // align panel right edge to button right edge
+        });
     }, [open]);
 
     // Compute kinds and tags that actually exist
@@ -950,9 +958,14 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
         else tags.add(tag);
         onChange({ ...filters, tags });
     };
-    const clearAll = () => onChange({ kinds: new Set(), tags: new Set() });
+    const clearAll = () => onChange({ ...filters, kinds: new Set(), tags: new Set() });
+    const toggleTagMode = () => {
+        const next = filters.tagMode === 'OR' ? 'AND' : 'OR';
+        onChange({ ...filters, tagMode: next });
+    };
 
     const activeCount = filters.kinds.size + filters.tags.size;
+    const tagMode = filters.tagMode === 'OR' ? 'OR' : 'AND';
 
     return (
         <div class="pl-filter-wrap" ref={wrapRef}>
@@ -960,7 +973,10 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
                 Filter{activeCount > 0 && <span class="pl-filter-badge">{activeCount}</span>}
             </button>
             {open && (
-                <div class="pl-filter-panel">
+                <div
+                    class="pl-filter-panel"
+                    style={panelPos ? { top: `${panelPos.top}px`, right: `${panelPos.right}px` } : { visibility: 'hidden' }}
+                >
                     {presentKinds.length > 0 && (
                         <>
                             <h5>Kinds</h5>
@@ -983,7 +999,29 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
                     )}
                     {allTags.length > 0 && (
                         <>
-                            <h5>Tags (AND)</h5>
+                            <h5 style={{ display: 'flex', alignItems: 'center' }}>
+                                <span>Tags</span>
+                                <button
+                                    onClick={toggleTagMode}
+                                    title={tagMode === 'AND'
+                                        ? 'AND: a task must have all selected tags. Click to switch to OR.'
+                                        : 'OR: a task must have any selected tag. Click to switch to AND.'}
+                                    style={{
+                                        marginLeft: 'auto',
+                                        padding: '1px 6px',
+                                        fontSize: '10px',
+                                        fontWeight: 700,
+                                        border: '1px solid #d8d8d8',
+                                        background: '#fff',
+                                        color: '#666',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer',
+                                        letterSpacing: '.05em',
+                                    }}
+                                >
+                                    {tagMode}
+                                </button>
+                            </h5>
                             <div style={{ maxHeight: '160px', overflowY: 'auto' }}>
                                 {allTags.map(tag => (
                                     <label class="pl-filter-row" key={tag}>
@@ -1029,15 +1067,13 @@ function PlannerApp() {
     const [scanArchived, setScanArchived] = useState(SCAN_ARCHIVED_DEFAULT);
 
     // Filters: persisted in plannerData._filters as { kinds: [], tags: [] }
-    const [filters, setFilters] = useState({ kinds: new Set(), tags: new Set() });
+    const [filters, setFilters] = useState({ kinds: new Set(), tags: new Set(), tagMode: 'AND' });
 
     const dragState = useRef({ id: null, insertBeforeId: null, dragMoved: false });
     const [insertMarker, setInsertMarker] = useState({ col: null, beforeId: null });
     const [isResizing,   setIsResizing]   = useState(false);
 
     // Resolved theme: defaults merged with label-based overrides.
-    // Memoised so a stable reference is passed to children and the CSS
-    // injection effect doesn't re-run on every render.
     const theme = useMemo(() => resolveTheme(themeOverrides), [themeOverrides]);
 
     // Inject CSS whenever the resolved theme changes (and once on mount).
@@ -1068,8 +1104,9 @@ function PlannerApp() {
                 // Apply persisted UI state from data
                 if (data._filters) {
                     setFilters({
-                        kinds: new Set(data._filters.kinds || []),
-                        tags:  new Set(data._filters.tags  || []),
+                        kinds:   new Set(data._filters.kinds || []),
+                        tags:    new Set(data._filters.tags  || []),
+                        tagMode: data._filters.tagMode === 'OR' ? 'OR' : 'AND',
                     });
                 }
                 const persistedWidth = data._backlogWidth;
@@ -1112,13 +1149,14 @@ function PlannerApp() {
         setPlannerData(prev => ({
             ...prev,
             _filters: {
-                kinds: Array.from(filters.kinds),
-                tags:  Array.from(filters.tags),
+                kinds:   Array.from(filters.kinds),
+                tags:    Array.from(filters.tags),
+                tagMode: filters.tagMode || 'AND',
             },
         }));
     }, [filters]);
 
-    /* Full reload — used by the ⟳ button. Slower but covers every case
+    /* Full reload, used by the ⟳ button. Covers every case
        (note deleted, kind changed, multiple notes edited). */
     const reload = useCallback(async () => {
         try {
@@ -1131,8 +1169,7 @@ function PlannerApp() {
         }
     }, [applyDateSuffixes, scanArchived]);
 
-    /* Single-note reload — used after mark-done and capture, when we know
-       exactly which note changed. Avoids a full database scan.
+    /* Single-note reload — used after mark-done and capture, 
        Replaces all tasks belonging to that note with the freshly-scanned ones,
        which is what keeps per-kind indices accurate after a mark-done. */
     const reloadNote = useCallback(async (noteId) => {
@@ -1405,14 +1442,14 @@ function PlannerApp() {
                 <span style={{ fontSize: '14px', color: '#666', marginLeft: 'auto' }}>
                     {planned}/{total} planned
                 </span>
+                <button class="pl-btn muted" onClick={() => clearWeek(weekKeys)} title="Clear this week">↺</button>
+                <button class="pl-btn muted" onClick={reload} title="Reload tasks">⟳</button>
                 <FilterDropdown
                     allTasks={allTasks}
                     filters={filters}
                     onChange={setFilters}
                     overrides={colorOverrides}
                 />
-                <button class="pl-btn muted" onClick={() => clearWeek(weekKeys)} title="Clear this week">↺</button>
-                <button class="pl-btn muted" onClick={reload} title="Reload tasks">⟳</button>
             </div>
 
             <CapturePanel onCapture={capture} working={capturing} />
