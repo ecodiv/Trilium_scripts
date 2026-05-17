@@ -41,7 +41,7 @@ Task Planner is a weekly planner for [Trilium Notes](https://triliumnotes.org/),
 
 Type e.g., `TODO buy milk` anywhere in a daily note, meeting note, or project note. The task appears in the planner. Drag it to a day column to schedule it. Mark it done from the planner, and the original source line is greyed out in place.
 
-The planner supports four task types: `TODO`, `IDEA`, `CHECK`, and `TOREAD`. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
+The planner supports four task types: `TODO`, `IDEA`, `CHECK`, `DEFER` and `TOREAD`. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
 
 ![](images/overview.png)
 
@@ -70,7 +70,8 @@ To set up the weekly planner, download `WeeklyPlanner.zip` and import it into Tr
 1.  `planner.jsx`, the code that runs the planner
 2.  `planner_data.json`, the state note
 
-For better organisation, you may want to import everything inside a parent note such as `Tools`, `Plugins`, or `Addons`.
+> [!TIP]
+> For better organisation, you may want to import everything inside a parent note such as `Tools`, `Plugins`, or `Addons`.
 
 After importing:
 
@@ -117,12 +118,14 @@ The planner scans every text note in the whole Trilium database for lines that s
 | `IDEA` | Captured thought | blue |
 | `CHECK` | To verify or review | green |
 | `TOREAD` | Reading queue | purple |
+| `DEFER` | Follow up later | teal |
 
 Prefixes are case-sensitive and must be followed by a space. They must appear at the start of a paragraph, at the start of a list item, or after a `<br>`. Anything else, such as `My TODO list:` in prose, is ignored.
 
 Archived notes are included in the scan by default. To exclude archived notes, add the label `#wp_scan_archived=false` to the `#plannerdata` note.
 
-> [!WARNING] A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task can make the planner treat it as a new task, so the planned day may be lost.
+> [!WARNING]
+> A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task can make the planner treat it as a new task, so the planned day may be lost.
 
 ### The day card
 
@@ -134,17 +137,14 @@ _Figure 2: Task cards with ✓ button visible on hover, kind chip, date suffix a
 
 The `✓` button in the top-right corner is the mark-done action. On desktop it appears on hover. On touch devices it is always visible. Clicking it removes the task from the planner. The line stays in your source note, greyed out, as a record of completion. You can also set progress, see below.
 
-> [!NOTE] Done items are not cleaned up automatically. Delete them manually when you want a tidy source note.
+> [!NOTE]
+> Done items are not cleaned up automatically. Delete them manually when you want a tidy source note.
 
 Clicking anywhere else on the card opens the source note. The default action opens it in a **side panel** alongside your current view. To open the source note as a new tab, use `Ctrl-click`, `Cmd-click` or `middle-click`.
 
 ### Progress
 
 Each card has a thin progress bar along its bottom edge. Click the bar to advance progress in 25% steps: 0 → 25 → 50 → 75 → 0. The bar is purely a visual way to track progress. The ✓ button is the only way to mark a task done. This will marked the task as done, greyed in its source note, and removed from the planner.
-
-![](images/progress.png)
-
-_Figure 3. Progress bar. The current percentage is shown as a small label above the bar when you hover over it._
 
 Progress is stored only in the `#plannerdata` JSON, under the `_progress` key. The source note is never modified for partial progress — only the final completion at 100% writes back to the source. Progress survives reloads and is preserved when dragging cards between days.
 
@@ -193,7 +193,7 @@ TODO call mom #personal
 TODO deploy staging #work #urgent
 ```
 
-Tags display as small grey pills on the card and feed the filter dropdown. Tags must start with a letter and can include letters, digits, underscores, and hyphens. Tags stay in the source note and do not move.
+Tags display in light grey inline within the task text, in the same position you typed them. They feed the filter dropdown but are not duplicated below the card. Tags must start with a letter and can include letters, digits, underscores, and hyphens. 
 
 ### Filtering
 
@@ -208,7 +208,7 @@ Click the **Filter** button in the top-right of the planner header. The dropdown
 | Filter type | Behaviour |
 | --- | --- |
 | Kinds | Checkboxes for each prefix type that has at least one task. Toggle them to hide or show task kinds. |
-| Tags | Checkboxes for every tag found across all tasks. Multiple selected tags are combined with AND, so a task must have all selected tags to show. |
+| Tags | Checkboxes for every tag found across all tasks. The header of the Tags section has a small `AND`/`OR` toggle that switches how multiple selected tags combine: **AND** means a task must have all selected tags; **OR** means a task must have at least one. The mode is persisted and defaults to AND. |
 
 If no kinds are selected, all kinds show. If no tags are selected, tag filtering is off. The active filter count appears as a small blue badge on the Filter button. **Clear filters** resets both kind and tag filters.
 
@@ -248,6 +248,7 @@ All settings are labels you add to the `#plannerdata` note. They all share the `
 | `#wp_idea=<colour>` | Overrides the `IDEA` chip colour. Default: blue. |
 | `#wp_check=<colour>` | Overrides the `CHECK` chip colour. Default: green. |
 | `#wp_toread=<colour>` | Overrides the `TOREAD` chip colour. Default: purple. |
+| `#wp_defer=<colour>` | Overrides the `DEFER` chip colour. Default: teal. |
 | `#wp_bg_task=<colour>` | Background colour of task cards. Default: `#f3f3f3`. |
 | `#wp_bg_panel=<colour>` | Background colour of the day and Backlog columns. Default: `#fafafa`. |
 | `#wp_color_done_text=<colour>` | Colour applied to the grey-out span around finished `DONE` lines in source notes. Default: `#cfcfcf`. |
