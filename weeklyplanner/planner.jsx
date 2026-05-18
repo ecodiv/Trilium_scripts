@@ -34,7 +34,8 @@
  *   2. Create a new code note, language: JSX
  *   3. Paste this code into it
  *   4. In your Render note, set ~renderNote → this JSX note
- *   5. A text note labeled #plannerdata must exist (stores state)
+ *   5. The #plannerdata note (stores state) is auto-created as a child of
+ *      this JSX note on first load — no manual setup needed.
  *      Optional labels (all on the #plannerdata note):
  *        #wp_backlog_width=320       default backlog column width (px)
  *        #wp_scan_archived=false     skip archived notes (default: true)
@@ -255,6 +256,30 @@ async function savePlannerData(plannerData) {
     }, [data]);
 }
 
+/* Ensure the #plannerdata state note exists. If missing, create it as a
+   child of parentNoteId (the JSX note that hosts this script) with the
+   required #plannerdata label */
+async function ensurePlannerNote(parentNoteId) {
+    return await runAsyncOnBackendWithManualTransactionHandling(
+        async (parentId) => {
+            let note = api.getNoteWithLabel('plannerdata');
+            if (note) return { created: false, noteId: note.noteId };
+
+            const created = await api.createTextNote(
+                parentId,
+                'Planner — State',
+                '{}'
+            );
+            note = created.note;
+            await note.setLabel('plannerdata', '');
+            await note.setLabel('hidePromotedAttributes', '');
+            await note.setLabel('iconClass', 'bx bx-calendar');
+            return { created: true, noteId: note.noteId };
+        },
+        [parentNoteId]
+    );
+}
+
 /* Build the GLOB filter for the SQL prefilter.
    Case-sensitive (matches the case-sensitive prefix rule).
    Returns: "b.content GLOB '*TODO *' OR b.content GLOB '*IDEA *' OR ..." */
@@ -403,9 +428,7 @@ function flattenGroups(groups) {
     return all;
 }
 
-/* Mark done: wrap the line in a grey span and replace prefix with DONE.
-   Replaces the Nth occurrence of `<kind> <body>` (up to a line/block boundary)
-   with `<span style="color:#cfcfcf">DONE <body></span>`. */
+/* Mark done: wrap the line in a grey span and replace prefix with DONE. */
 async function markTaskDone(task, doneTextColor) {
     await runOnBackend((noteId, kind, indexForKind, doneColor) => {
         const note = api.getNote(noteId);
@@ -1094,10 +1117,21 @@ function PlannerApp() {
         return changed ? { ...currentData, ...updates } : currentData;
     }, []);
 
-    /* Initial load */
+    /* Initial load. The #plannerdata state note is auto-created here on
+       first run as a child of this JSX note, so the user never needs to
+       set it up manually. ensurePlannerNote is idempotent — a no-op on
+       every subsequent load. */
     useEffect(() => {
         (async () => {
             try {
+                const parentId = (typeof api !== 'undefined' && api.startNote)
+                    ? api.startNote.noteId
+                    : 'root';
+                const ensured = await ensurePlannerNote(parentId);
+                if (ensured && ensured.created) {
+                    console.log('Created #plannerdata note as child of dashboard.');
+                }
+
                 const loaded = await loadPlannerData();
                 const data = loaded.data || {};
 

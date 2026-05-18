@@ -75,12 +75,11 @@ To set up the weekly planner, download `WeeklyPlanner.zip` and import it into Tr
 
 After importing:
 
-1.  Open the imported `planner_data.json` note.
-2.  Open its attributes.
-3.  Add the label `#plannerdata`.
-4.  Create a note of type **Render** anywhere in your tree.
-5.  Add a relation `~renderNote` from the Render note to the imported `planner.jsx` note.
-6.  Open the Render note to run the planner.
+1.  Create a note of type **Render** anywhere in your tree.
+2.  Add a relation `~renderNote` from the Render note to the imported `planner.jsx` note.
+3.  Open the Render note to run the planner.
+4.  A #plannerdata note is auto-created as a child of the JSX note on first load. This holds the planner data, and normally you should not need to interact with this note.
+
 
 ### First test
 
