@@ -234,6 +234,7 @@ async function runScan(config, systemNoteIds) {
 
         const BASE_FILTER = `
             n.isDeleted = 0
+            AND n.isProtected = 0
             AND ${NOT_SYSTEM}
             AND ${TYPE_WHITELIST}
             AND ${NOT_ARCHIVED}
@@ -260,12 +261,15 @@ async function runScan(config, systemNoteIds) {
            matches both reference-link and custom-title forms. */
         const referenced = new Set();
 
-        // (a) Inline links from note content (both reference-link and custom-title)
+        // (a) Inline links from note content (both reference-link and custom-title).
+        //     Protected notes are skipped: their content is encrypted and not
+        //     readable by background scripts, so the GLOB never matches anyway.
         const linkCandidates = safe(`
             SELECT b.content
             FROM notes n
             JOIN blobs b ON b.blobId = n.blobId
             WHERE n.isDeleted = 0
+              AND n.isProtected = 0
               AND n.type IN ('text','code')
               AND b.content GLOB '*href="#root*'
         `, []);

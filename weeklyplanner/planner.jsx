@@ -28,14 +28,23 @@
  *   @date suffix           →  auto-schedules. accepts: @YYYY-MM-DD, @today,
  *                             @tomorrow, @mon..@sun
  *   #tag suffix            →  filterable. Multiple tags allowed.
+ *   ⚙ in header            →  open scope config (include/exclude subtrees).
+ *                             Drag notes from the tree to add. Auto-saves and
+ *                             rescans. Changes don't clear your schedules.
+ *   ⚠ <date> on card       →  task was scheduled to a past date. Drag to a
+ *                             future day to reschedule, or × on the badge to
+ *                             dismiss (keeps task, clears stored schedule).
  *
  * SETUP:
  *   1. Options → Code Notes → enable "JSX"
  *   2. Create a new code note, language: JSX
  *   3. Paste this code into it
  *   4. In your Render note, set ~renderNote → this JSX note
- *   5. The #plannerdata note (stores state) is auto-created as a child of
- *      this JSX note on first load — no manual setup needed.
+ *   5. Two child notes are auto-created under this JSX note on first load:
+ *        #plannerdata    — JSON state (week assignments, filters, UI prefs)
+ *        #plannerConfig  — scope config (include/exclude subtrees, set via
+ *                          the ⚙ button in the planner header)
+ *      No manual setup needed.
  *      Optional labels (all on the #plannerdata note):
  *        #wp_backlog_width=320       default backlog column width (px)
  *        #wp_scan_archived=false     skip archived notes (default: true)
@@ -258,7 +267,9 @@ async function savePlannerData(plannerData) {
 
 /* Ensure the #plannerdata state note exists. If missing, create it as a
    child of parentNoteId (the JSX note that hosts this script) with the
-   required #plannerdata label */
+   required #plannerdata label and a sensible icon, seeded with an empty
+   JSON object. Returns { created, noteId } — created=true on first run.
+   Safe to call repeatedly: a no-op when the note already exists. */
 async function ensurePlannerNote(parentNoteId) {
     return await runAsyncOnBackendWithManualTransactionHandling(
         async (parentId) => {
@@ -280,6 +291,99 @@ async function ensurePlannerNote(parentNoteId) {
     );
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   CONFIG NOTE — scope config (include/exclude subtrees)
+   Stored as a separate child note (#plannerConfig) with JSON body:
+     { mode: 'exclude'|'include', subtrees: [{noteId, title}, ...] }
+   Modelled directly on knowledge-debt's #kdConfig.
+══════════════════════════════════════════════════════════════════ */
+
+const PLANNER_CONFIG_LABEL = 'plannerConfig';
+const DEFAULT_PLANNER_CONFIG = { mode: 'exclude', subtrees: [] };
+
+/* Load scope config. Returns { config, configNoteId }; noteId is null when
+   the note doesn't exist yet (the ensure call creates it on first mount). */
+async function loadPlannerConfig() {
+    return await runOnBackend((label, defaults) => {
+        const note = api.getNoteWithLabel(label);
+        if (!note) return { config: defaults, configNoteId: null };
+        let cfg = defaults;
+        try {
+            const raw = note.getContent();
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                cfg = {
+                    mode: (parsed.mode === 'include' ? 'include' : 'exclude'),
+                    subtrees: Array.isArray(parsed.subtrees) ? parsed.subtrees : [],
+                };
+            }
+        } catch (_) { /* corrupt JSON → defaults */ }
+        return { config: cfg, configNoteId: note.noteId };
+    }, [PLANNER_CONFIG_LABEL, DEFAULT_PLANNER_CONFIG]);
+}
+
+/* Save scope config. The note is guaranteed to exist by the time we get
+   here — ensurePlannerConfig runs on mount, and this save effect is gated
+   on configLoaded. Throws if somehow called before that. */
+async function savePlannerConfig(config) {
+    const json = JSON.stringify(config, null, 2);
+    return await runAsyncOnBackendWithManualTransactionHandling(
+        async (jsonStr, label) => {
+            const note = api.getNoteWithLabel(label);
+            if (!note) throw new Error('#plannerConfig note not found');
+            note.setContent(jsonStr);
+            await note.save();
+            return note.noteId;
+        },
+        [json, PLANNER_CONFIG_LABEL]
+    );
+}
+
+/* Ensure the #plannerConfig note exists, mirroring ensurePlannerNote.
+   Created as a child of parentNoteId on first run, seeded with the
+   defaults. Idempotent. */
+async function ensurePlannerConfig(parentNoteId) {
+    return await runAsyncOnBackendWithManualTransactionHandling(
+        async (parentId, label, defaultsJson) => {
+            let note = api.getNoteWithLabel(label);
+            if (note) return { created: false, noteId: note.noteId };
+
+            const created = await api.createTextNote(
+                parentId,
+                'Planner — Config',
+                defaultsJson
+            );
+            note = created.note;
+            await note.setLabel(label, '');
+            await note.setLabel('hidePromotedAttributes', '');
+            await note.setLabel('iconClass', 'bx bx-cog');
+            return { created: true, noteId: note.noteId };
+        },
+        [parentNoteId, PLANNER_CONFIG_LABEL, JSON.stringify(DEFAULT_PLANNER_CONFIG, null, 2)]
+    );
+}
+
+/* Parse Trilium tree drag payload from dataTransfer.
+   Trilium sets text/plain to a JSON array:
+     [{"noteId":"...","branchId":"...","title":"..."}, ...]
+   Returns [] if anything goes wrong. */
+function parseDragPayload(dt) {
+    try {
+        const txt = dt.getData('text/plain');
+        if (!txt) return [];
+        const parsed = JSON.parse(txt);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter(item => item && item.noteId)
+            .map(item => ({
+                noteId: String(item.noteId),
+                title: String(item.title || item.noteId),
+            }));
+    } catch (_) {
+        return [];
+    }
+}
+
 /* Build the GLOB filter for the SQL prefilter.
    Case-sensitive (matches the case-sensitive prefix rule).
    Returns: "b.content GLOB '*TODO *' OR b.content GLOB '*IDEA *' OR ..." */
@@ -287,12 +391,23 @@ function buildPrefixGlobClause() {
     return KIND_KEYS.map(k => `b.content GLOB '*${k} *'`).join(' OR ');
 }
 
-/* Scan all text notes for prefixed lines.*/
-async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
+/* Scan all text notes for prefixed lines.
+   `config`        — { mode: 'include'|'exclude', subtrees: [{noteId,title}, ...] }
+   `systemNoteIds` — noteIds to always skip (this JSX note + state + config) */
+async function fetchAllTasks({
+    scanArchived = SCAN_ARCHIVED_DEFAULT,
+    config = DEFAULT_PLANNER_CONFIG,
+    systemNoteIds = [],
+} = {}) {
     const kindRe = KIND_RE_SOURCE;
     const prefixClause = buildPrefixGlobClause();
+    const cfgMode = config.mode === 'include' ? 'include' : 'exclude';
+    const cfgSubtreeRoots = (config.subtrees || []).map(s => s.noteId).filter(Boolean);
 
-    const groups = await runOnBackend((kindReSource, includeArchived, prefixGlobClause) => {
+    const groups = await runOnBackend((
+        kindReSource, includeArchived, prefixGlobClause,
+        mode, subtreeRoots, sysNoteIds
+    ) => {
         const findRe = new RegExp(
             `(^|>|<br\\s*/?>)\\s*(${kindReSource})\\s+([\\s\\S]*?)(?=</(?:p|li|div|h[1-6])>|<br\\s*/?>|$)`,
             'g'
@@ -307,6 +422,36 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
             .replace(/&#39;/g,   "'")
             .replace(/\s+/g,     ' ')
             .trim();
+
+        /* Quote a JS array of strings into a SQL IN-list. */
+        function sqlList(arr) {
+            return arr.map(v => "'" + String(v).replace(/'/g, "''") + "'").join(',');
+        }
+
+        /* Walk the branches table from root noteIds to collect every
+           descendant. Iterative BFS, bounded to 50 levels. */
+        function expandSubtrees(rootIds) {
+            const expanded = new Set();
+            if (!rootIds || !rootIds.length) return expanded;
+            let frontier = rootIds.filter(id => id);
+            for (const id of frontier) expanded.add(id);
+            for (let depth = 0; depth < 50 && frontier.length; depth++) {
+                const list = sqlList(frontier);
+                const children = api.sql.getRows(
+                    `SELECT DISTINCT noteId FROM branches
+                     WHERE parentNoteId IN (${list}) AND isDeleted = 0`
+                );
+                const newOnes = [];
+                for (const r of children) {
+                    if (!expanded.has(r.noteId)) {
+                        expanded.add(r.noteId);
+                        newOnes.push(r.noteId);
+                    }
+                }
+                frontier = newOnes;
+            }
+            return expanded;
+        }
 
         function scanContent(content) {
             const tasks = [];
@@ -323,6 +468,27 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
             return tasks;
         }
 
+        /* Apply user scope config: include/exclude subtrees from #plannerConfig.
+           Empty subtree list → no scope filter (full-tree scan).
+           Include mode with empty subtree list is special-cased upstream
+           (the scan is skipped entirely), so here we only need to handle the
+           "subtrees present" path. */
+        const expandedSubtrees = expandSubtrees(subtreeRoots);
+        const expandedArr = [...expandedSubtrees];
+        let SCOPE_CLAUSE = '1=1';
+        if (expandedArr.length) {
+            const list = sqlList(expandedArr);
+            SCOPE_CLAUSE = mode === 'include'
+                ? `n.noteId IN (${list})`
+                : `n.noteId NOT IN (${list})`;
+        }
+
+        /* Always exclude infrastructure notes (this JSX note, state, config).
+           Hardcoded into the SQL — invisible to user, survives config resets. */
+        const NOT_INFRASTRUCTURE = sysNoteIds && sysNoteIds.length
+            ? `n.noteId NOT IN (${sqlList(sysNoteIds)})`
+            : '1=1';
+
         // Fast path: SQL prefilter via JOIN on blobs.
         // Returns only notes whose content matches at least one prefix.
         let rows;
@@ -330,14 +496,20 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
             rows = api.sql.getRows(
                 "SELECT n.noteId, n.title FROM notes n " +
                 "JOIN blobs b ON b.blobId = n.blobId " +
-                "WHERE n.isDeleted = 0 AND n.isProtected = 0 AND n.type = 'text' AND (" + prefixGlobClause + ") " +
+                "WHERE n.isDeleted = 0 AND n.isProtected = 0 AND n.type = 'text' " +
+                "AND (" + prefixGlobClause + ") " +
+                "AND " + SCOPE_CLAUSE + " " +
+                "AND " + NOT_INFRASTRUCTURE + " " +
                 "ORDER BY n.title COLLATE NOCASE"
             );
         } catch (err) {
-            // Fallback for unexpected schema differences: plain SELECT,
+            // Fallback for unexpected schema differences: plain SELECT.
+            // Scope and infrastructure filters still apply.
             rows = api.sql.getRows(
-                "SELECT noteId, title FROM notes " +
+                "SELECT noteId, title FROM notes n " +
                 "WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text' " +
+                "AND " + SCOPE_CLAUSE + " " +
+                "AND " + NOT_INFRASTRUCTURE + " " +
                 "ORDER BY title COLLATE NOCASE"
             );
         }
@@ -355,7 +527,7 @@ async function fetchAllTasks({ scanArchived = SCAN_ARCHIVED_DEFAULT } = {}) {
             }
         }
         return result;
-    }, [kindRe, scanArchived, prefixClause]);
+    }, [kindRe, scanArchived, prefixClause, cfgMode, cfgSubtreeRoots, systemNoteIds]);
 
     return flattenGroups(groups);
 }
@@ -428,7 +600,9 @@ function flattenGroups(groups) {
     return all;
 }
 
-/* Mark done: wrap the line in a grey span and replace prefix with DONE. */
+/* Mark done: wrap the line in a grey span and replace prefix with DONE.
+   Replaces the Nth occurrence of `<kind> <body>` (up to a line/block boundary)
+   with `<span style="color:#cfcfcf">DONE <body></span>`. */
 async function markTaskDone(task, doneTextColor) {
     await runOnBackend((noteId, kind, indexForKind, doneColor) => {
         const note = api.getNote(noteId);
@@ -510,6 +684,20 @@ function weekLabel(cols) {
     return `${d0.getDate()} ${months[d0.getMonth()]} – ${d1.getDate()} ${months[d1.getMonth()]} ${d1.getFullYear()}`;
 }
 
+/* Short "27 May" / "27 May '25" formatter for the overdue badge.
+   Omits the year if it matches the current year. */
+function formatOverdueDate(iso) {
+    if (!iso || typeof iso !== 'string') return '';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const d = new Date(iso + 'T12:00:00');
+    if (isNaN(d.getTime())) return iso;
+    const day = d.getDate();
+    const mon = months[d.getMonth()];
+    const yr  = d.getFullYear();
+    const thisYear = new Date().getFullYear();
+    return yr === thisYear ? `${day} ${mon}` : `${day} ${mon} '${String(yr).slice(2)}`;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    ORDER + FILTER HELPERS
 ══════════════════════════════════════════════════════════════════ */
@@ -538,8 +726,28 @@ function applyFilters(tasks, filters) {
     });
 }
 
-function getBacklog(allTasks, plannerData) {
-    return allTasks.filter(t => !plannerData[t.id]);
+/* Backlog = tasks the user hasn't planned for a specific day, PLUS tasks
+   scheduled to a date strictly before `todayIso` (past-due). The latter
+   carry `isOverdue: true` so the card renders with a visual marker.
+
+   This makes overdue tasks reachable from any week — including future weeks
+   — so the user can drag them onto a new day instead of having to navigate
+   back to find them. The JSON state is not mutated; the original scheduled
+   date is preserved (the task still also appears in its original day
+   column if that week is being viewed). */
+function getBacklog(allTasks, plannerData, todayIso) {
+    const result = [];
+    for (const t of allTasks) {
+        const scheduled = plannerData[t.id];
+        if (!scheduled) {
+            result.push(t);
+        } else if (todayIso && scheduled < todayIso) {
+            // ISO date strings (YYYY-MM-DD) sort lexicographically the same
+            // as chronologically, so a plain string compare is correct.
+            result.push({ ...t, isOverdue: true, overdueDate: scheduled });
+        }
+    }
+    return result;
 }
 
 function getDayTasks(allTasks, plannerData, iso) {
@@ -722,6 +930,108 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-task-progress:hover .pl-task-progress-label { opacity:1; }
 /* Add bottom padding so card content doesn't sit under the bar */
 .pl-task { padding-bottom:9px; }
+
+/* Config panel — scope (include/exclude subtrees) */
+.pl-config-panel {
+    padding:12px 16px;
+    background:#f5f5f5;
+    border-bottom:1px solid #d0d0d0;
+    flex-shrink:0;
+}
+.pl-config-row {
+    display:flex; align-items:center; gap:12px;
+    margin-bottom:10px; flex-wrap:wrap;
+}
+.pl-config-label {
+    font-size:11px; font-weight:600; text-transform:uppercase;
+    color:#888; letter-spacing:0.05em;
+}
+.pl-mode-toggle {
+    display:inline-flex; border:1px solid #c8c8c8;
+    border-radius:4px; overflow:hidden;
+}
+.pl-mode-btn {
+    padding:4px 12px; font-size:12px; cursor:pointer;
+    background:transparent; border:none; color:#666;
+}
+.pl-mode-btn.active {
+    background:#444; color:#fff; font-weight:600;
+}
+.pl-dropzone {
+    border:2px dashed #c8c8c8;
+    border-radius:6px; padding:12px;
+    text-align:center; font-size:12px; color:#888;
+    transition:background .15s, border-color .15s;
+}
+.pl-dropzone.over {
+    background:rgba(137,180,250,0.10);
+    border-color:#89b4fa; color:#333;
+}
+.pl-chips {
+    display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;
+}
+.pl-chip {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:3px 6px 3px 10px;
+    background:#fff; border:1px solid #d0d0d0;
+    border-radius:12px; font-size:12px;
+}
+.pl-chip-title {
+    max-width:200px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+}
+.pl-chip-x {
+    cursor:pointer; padding:0 4px; border-radius:50%;
+    color:#888; font-weight:700;
+}
+.pl-chip-x:hover { color:#d97070; background:rgba(217,112,112,0.1); }
+.pl-config-hint {
+    font-size:11px; color:#888; font-style:italic; margin-top:6px;
+}
+.pl-badge {
+    display:inline-block; min-width:16px; height:16px;
+    padding:0 4px; border-radius:8px; font-size:10px;
+    line-height:16px; text-align:center;
+    background:#89b4fa; color:#fff; margin-left:4px; font-weight:700;
+}
+.pl-btn.active {
+    background:#444; color:#fff; border-color:#444;
+}
+
+/* Overdue badge — shown on cards in the backlog when a task's scheduled
+   date is in the past. Subtle warning tint, not alarming red.
+   Composed of a text span and a hover-only × that dismisses (clears the
+   stored date so the task becomes a normal unplanned task). */
+.pl-overdue-badge {
+    display:inline-flex; align-items:center;
+    margin-right:6px;
+    padding:1px 2px 1px 6px;
+    border-radius:4px;
+    background:#fbe9b8;
+    color:#7a5a00;
+    font-size:11px;
+    font-weight:600;
+    vertical-align:middle;
+    white-space:nowrap;
+    gap:2px;
+}
+.pl-overdue-text { padding-right:2px; }
+.pl-overdue-x {
+    display:inline-block;
+    padding:0 5px;
+    border-radius:3px;
+    cursor:pointer;
+    color:#a37800;
+    font-weight:700;
+    opacity:0;
+    transition:opacity .12s, background .12s, color .12s;
+}
+.pl-task:hover .pl-overdue-x { opacity:0.6; }
+.pl-overdue-x:hover {
+    opacity:1 !important;
+    background:rgba(217,112,112,0.15);
+    color:#a83333;
+}
 `;
 }
 
@@ -776,7 +1086,7 @@ function renderTaskText(text) {
     return parts;
 }
 
-function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, onSetProgress, onDragStart, onDragEnd }) {
+function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, onSetProgress, onDismissOverdue, onDragStart, onDragEnd }) {
     const [working, setWorking] = useState(false);
 
     const handleDone = async (e) => {
@@ -818,6 +1128,26 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
             </button>
             <div style={{ paddingRight: '20px' }}>
                 <KindChip kind={task.kind} overrides={overrides} />
+                {task.isOverdue && (
+                    <span class="pl-overdue-badge">
+                        <span
+                            class="pl-overdue-text"
+                            title={`Originally scheduled for ${task.overdueDate}`}
+                        >
+                            ⚠ {formatOverdueDate(task.overdueDate)}
+                        </span>
+                        <span
+                            class="pl-overdue-x"
+                            title="Dismiss (keep task, clear schedule)"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDismissOverdue && onDismissOverdue(task);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            draggable={false}
+                        >×</span>
+                    </span>
+                )}
                 {renderTaskText(task.text)}
             </div>
             <div class="pl-task-note">{task.noteTitle}</div>
@@ -836,7 +1166,8 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
 
 function Column({
     col, tasks, mobile, isResizing, widthStyle, overrides, progressMap,
-    onCardClick, onCardMarkDone, onCardSetProgress, onCardDragStart, onCardDragEnd,
+    onCardClick, onCardMarkDone, onCardSetProgress, onCardDismissOverdue,
+    onCardDragStart, onCardDragEnd,
     onDragOver, onDragLeave, onDrop,
     onResizeStart, insertMarkerBeforeId,
 }) {
@@ -873,6 +1204,7 @@ function Column({
                             onClick={(e) => onCardClick(t, e)}
                             onMarkDone={onCardMarkDone}
                             onSetProgress={onCardSetProgress}
+                            onDismissOverdue={onCardDismissOverdue}
                             onDragStart={(e) => onCardDragStart(t, e)}
                             onDragEnd={onCardDragEnd}
                         />
@@ -1074,6 +1406,106 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
 
 
 /* ═══════════════════════════════════════════════════════════════
+   CONFIG PANEL — scope (include/exclude subtrees)
+══════════════════════════════════════════════════════════════════ */
+
+function ConfigPanel({ config, onChange }) {
+    const [dragOver, setDragOver] = useState(false);
+    const subtrees = config.subtrees || [];
+
+    const setMode = (mode) => onChange({ ...config, mode });
+
+    const addSubtrees = (items) => {
+        const existing = new Set(subtrees.map(s => s.noteId));
+        const merged = [...subtrees];
+        for (const item of items) {
+            if (!existing.has(item.noteId)) {
+                merged.push(item);
+                existing.add(item.noteId);
+            }
+        }
+        if (merged.length !== subtrees.length) {
+            onChange({ ...config, subtrees: merged });
+        }
+    };
+
+    const removeSubtree = (noteId) => {
+        onChange({ ...config, subtrees: subtrees.filter(s => s.noteId !== noteId) });
+    };
+
+    const onDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!dragOver) setDragOver(true);
+    };
+    const onDragLeave = (e) => {
+        e.preventDefault();
+        setDragOver(false);
+    };
+    const onDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOver(false);
+        const items = parseDragPayload(e.dataTransfer);
+        if (items.length) addSubtrees(items);
+    };
+
+    return (
+        <div class="pl-config-panel">
+            <div class="pl-config-row">
+                <span class="pl-config-label">Scope</span>
+                <div class="pl-mode-toggle">
+                    <button
+                        class={`pl-mode-btn${config.mode === 'exclude' ? ' active' : ''}`}
+                        onClick={() => setMode('exclude')}
+                        title="Scan everything except these subtrees"
+                    >Exclude</button>
+                    <button
+                        class={`pl-mode-btn${config.mode === 'include' ? ' active' : ''}`}
+                        onClick={() => setMode('include')}
+                        title="Scan only these subtrees"
+                    >Include</button>
+                </div>
+            </div>
+
+            <div
+                class={`pl-dropzone${dragOver ? ' over' : ''}`}
+                onDragOver={onDragOver}
+                onDragEnter={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+            >
+                {dragOver
+                    ? 'Drop to add subtree(s)'
+                    : 'Drag notes from the tree here to add'}
+            </div>
+
+            {subtrees.length > 0 ? (
+                <div class="pl-chips">
+                    {subtrees.map(s => (
+                        <span class="pl-chip" key={s.noteId}>
+                            <span class="pl-chip-title" title={s.noteId}>📁 {s.title}</span>
+                            <span
+                                class="pl-chip-x"
+                                onClick={() => removeSubtree(s.noteId)}
+                                title="Remove"
+                            >×</span>
+                        </span>
+                    ))}
+                </div>
+            ) : (
+                <div class="pl-config-hint">
+                    {config.mode === 'include'
+                        ? '⚠ No subtrees selected — Include mode scans nothing. Drag at least one subtree above.'
+                        : 'Empty list: full-tree scan.'}
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
    ROOT COMPONENT
 ══════════════════════════════════════════════════════════════════ */
 
@@ -1088,6 +1520,17 @@ function PlannerApp() {
     const [colorOverrides, setColorOverrides] = useState({});
     const [themeOverrides, setThemeOverrides] = useState({});
     const [scanArchived, setScanArchived] = useState(SCAN_ARCHIVED_DEFAULT);
+
+    // Scope config (#plannerConfig) — loaded on mount, saved on change (debounced).
+    // Drives include/exclude subtree filtering at scan time.
+    const [config, setConfig] = useState(DEFAULT_PLANNER_CONFIG);
+    const [configNoteId, setConfigNoteId] = useState(null);
+    const [stateNoteId,  setStateNoteId]  = useState(null);  // for scan exclusion
+    const [configLoaded, setConfigLoaded] = useState(false);
+    const [showConfig, setShowConfig] = useState(false);
+    const configSaveDebounceRef = useRef(null);
+    const configReloadDebounceRef = useRef(null);
+    const skipFirstConfigSaveRef = useRef(true);  // skip the state-from-load save
 
     // Filters: persisted in plannerData._filters as { kinds: [], tags: [] }
     const [filters, setFilters] = useState({ kinds: new Set(), tags: new Set(), tagMode: 'AND' });
@@ -1117,10 +1560,10 @@ function PlannerApp() {
         return changed ? { ...currentData, ...updates } : currentData;
     }, []);
 
-    /* Initial load. The #plannerdata state note is auto-created here on
-       first run as a child of this JSX note, so the user never needs to
-       set it up manually. ensurePlannerNote is idempotent — a no-op on
-       every subsequent load. */
+    /* Initial load. Both #plannerdata (state) and #plannerConfig (scope)
+       are auto-created here on first run as children of this JSX note,
+       so the user never has to set them up manually. Both ensure helpers
+       are idempotent — no-ops on every subsequent load. */
     useEffect(() => {
         (async () => {
             try {
@@ -1131,6 +1574,17 @@ function PlannerApp() {
                 if (ensured && ensured.created) {
                     console.log('Created #plannerdata note as child of dashboard.');
                 }
+                if (ensured && ensured.noteId) setStateNoteId(ensured.noteId);
+                const ensuredCfg = await ensurePlannerConfig(parentId);
+                if (ensuredCfg && ensuredCfg.created) {
+                    console.log('Created #plannerConfig note as child of dashboard.');
+                }
+
+                // Load scope config in parallel with state
+                const { config: loadedCfg, configNoteId: cfgId } = await loadPlannerConfig();
+                setConfig(loadedCfg);
+                setConfigNoteId(cfgId || (ensuredCfg && ensuredCfg.noteId) || null);
+                setConfigLoaded(true);
 
                 const loaded = await loadPlannerData();
                 const data = loaded.data || {};
@@ -1155,8 +1609,28 @@ function PlannerApp() {
                 if (loaded.themeOverrides) setThemeOverrides(loaded.themeOverrides);
                 setScanArchived(loaded.scanArchived !== false);
 
-                // Fetch tasks, apply @date auto-scheduling, then set both at once
-                const tasks = await fetchAllTasks({ scanArchived: loaded.scanArchived !== false });
+                // Compute system noteIds to exclude from the scan.
+                // Both ensure helpers return the noteId of the note they
+                // touched (whether created or already-existing), which we
+                // use here so the scan never picks up its own infrastructure.
+                const sysIds = [];
+                if (typeof api !== 'undefined' && api.startNote)   sysIds.push(api.startNote.noteId);
+                if (typeof api !== 'undefined' && api.currentNote) sysIds.push(api.currentNote.noteId);
+                if (ensured && ensured.noteId)                     sysIds.push(ensured.noteId);
+                if (cfgId)                                          sysIds.push(cfgId);
+                else if (ensuredCfg && ensuredCfg.noteId)           sysIds.push(ensuredCfg.noteId);
+
+                // Skip the initial scan if the user picked Include mode with no subtrees
+                const includeEmpty = loadedCfg.mode === 'include'
+                    && (!loadedCfg.subtrees || loadedCfg.subtrees.length === 0);
+                let tasks = [];
+                if (!includeEmpty) {
+                    tasks = await fetchAllTasks({
+                        scanArchived: loaded.scanArchived !== false,
+                        config: loadedCfg,
+                        systemNoteIds: [...new Set(sysIds)],
+                    });
+                }
                 setAllTasks(tasks);
                 setPlannerData(applyDateSuffixes(tasks, data));
             } catch (err) {
@@ -1190,18 +1664,81 @@ function PlannerApp() {
         }));
     }, [filters]);
 
+    /* Notes the planner should never scan (this JSX note + state + config).
+       Hardcoded into the scan SQL, so a typo'd config can't accidentally
+       cause the planner to scan itself. */
+    const systemNoteIds = useMemo(() => {
+        const ids = [];
+        if (typeof api !== 'undefined' && api.startNote)   ids.push(api.startNote.noteId);
+        if (typeof api !== 'undefined' && api.currentNote) ids.push(api.currentNote.noteId);
+        if (stateNoteId)  ids.push(stateNoteId);
+        if (configNoteId) ids.push(configNoteId);
+        return [...new Set(ids)];
+    }, [stateNoteId, configNoteId]);
+
+    /* Include mode with no subtrees would scan nothing — skip the scan
+       and surface a hint in the config panel instead. */
+    const includeEmpty = config.mode === 'include'
+        && (!config.subtrees || config.subtrees.length === 0);
+
     /* Full reload, used by the ⟳ button. Covers every case
-       (note deleted, kind changed, multiple notes edited). */
+       (note deleted, kind changed, multiple notes edited).
+       Honors the current scope config and system-note exclusions. */
     const reload = useCallback(async () => {
         try {
-            const tasks = await fetchAllTasks({ scanArchived });
+            if (includeEmpty) {
+                // Don't scan; just clear visible tasks. JSON state is preserved.
+                setAllTasks([]);
+                return;
+            }
+            const tasks = await fetchAllTasks({ scanArchived, config, systemNoteIds });
             setAllTasks(tasks);
             setPlannerData(prev => applyDateSuffixes(tasks, prev));
         } catch (err) {
             console.error('reload:', err);
             setError(String(err.message || err));
         }
-    }, [applyDateSuffixes, scanArchived]);
+    }, [applyDateSuffixes, scanArchived, config, systemNoteIds, includeEmpty]);
+
+    /* Persist scope config when it changes (debounced).
+       The config note is guaranteed to exist by the time we get here
+       (ensurePlannerConfig ran on mount), so this is a pure update. */
+    useEffect(() => {
+        if (!configLoaded) return;
+        if (skipFirstConfigSaveRef.current) {
+            skipFirstConfigSaveRef.current = false;
+            return;
+        }
+        clearTimeout(configSaveDebounceRef.current);
+        configSaveDebounceRef.current = setTimeout(async () => {
+            try {
+                await savePlannerConfig(config);
+            } catch (err) {
+                console.error('Config save failed:', err);
+                setError(String(err.message || err));
+            }
+        }, 400);
+        return () => clearTimeout(configSaveDebounceRef.current);
+    }, [config, configLoaded]);
+
+    /* Auto-rescan when scope config changes (debounced).
+       The user changing include/exclude or adding/removing a subtree should
+       see the result immediately, without having to press ⟳. Debounced to
+       coalesce rapid chip changes into a single scan. */
+    const skipFirstConfigReloadRef = useRef(true);
+    useEffect(() => {
+        if (!configLoaded) return;
+        if (skipFirstConfigReloadRef.current) {
+            skipFirstConfigReloadRef.current = false;
+            return;
+        }
+        clearTimeout(configReloadDebounceRef.current);
+        configReloadDebounceRef.current = setTimeout(() => {
+            reload();
+        }, 500);
+        return () => clearTimeout(configReloadDebounceRef.current);
+    // eslint-disable-next-line — reload changes whenever config does; that's fine
+    }, [config, configLoaded]);
 
     /* Single-note reload — used after mark-done and capture, 
        Replaces all tasks belonging to that note with the freshly-scanned ones,
@@ -1253,6 +1790,27 @@ function PlannerApp() {
             await reload();
         }
     }, [reload, reloadNote, theme]);
+
+    /* Dismiss an overdue badge: clears the stored schedule for this task.
+       The task remains in the source note and reappears as a normal
+       unscheduled item in the backlog. Mirrors the effect of dragging
+       the card from backlog→backlog, but as a single click on the × of
+       the warning badge (more discoverable). */
+    const dismissOverdue = useCallback((task) => {
+        setPlannerData(prev => {
+            const oldDay = prev[task.id];
+            if (!oldDay) return prev;   // nothing to dismiss
+            const next = { ...prev };
+            delete next[task.id];
+            if (next._order && next._order[oldDay]) {
+                next._order = {
+                    ...next._order,
+                    [oldDay]: next._order[oldDay].filter(id => id !== task.id),
+                };
+            }
+            return next;
+        });
+    }, []);
 
     const capture = useCallback(async (rawText) => {
         setCapturing(true);
@@ -1447,10 +2005,21 @@ function PlannerApp() {
 
     const total   = filteredTasks.length;
     const planned = filteredTasks.filter(t => weekKeys.has(plannerData[t.id])).length;
-    const backlog = getBacklog(filteredTasks, plannerData);
+    // Recomputed every render — cheap, and keeps overdue accurate if the
+    // planner is left open across midnight.
+    const todayIso = toLocalIsoDate(todayBase());
+    const backlog = getBacklog(filteredTasks, plannerData, todayIso);
+    const overdueCount = backlog.reduce((n, t) => n + (t.isOverdue ? 1 : 0), 0);
+    const unplannedCount = backlog.length - overdueCount;
+    const subtreeCount = (config.subtrees || []).length;
+
+    // Backlog header text: "5 unplanned · 2 overdue" or just "5 unplanned"
+    const backlogLabel = overdueCount > 0
+        ? `${unplannedCount} unplanned · ${overdueCount} overdue`
+        : `${unplannedCount} unplanned`;
 
     const allCols = [
-        { key: 'backlog', label: 'Backlog', dateStr: `${backlog.length} unplanned`, isToday: false, isBacklog: true },
+        { key: 'backlog', label: 'Backlog', dateStr: backlogLabel, isToday: false, isBacklog: true },
         ...weekCols.map(c => ({ ...c, isBacklog: false })),
     ];
 
@@ -1477,7 +2046,26 @@ function PlannerApp() {
                     {planned}/{total} planned
                 </span>
                 <button class="pl-btn muted" onClick={() => clearWeek(weekKeys)} title="Clear this week">↺</button>
-                <button class="pl-btn muted" onClick={reload} title="Reload tasks">⟳</button>
+                <button
+                    class="pl-btn muted"
+                    onClick={reload}
+                    disabled={includeEmpty}
+                    title={includeEmpty
+                        ? 'Include mode is empty — add a subtree to scan'
+                        : 'Reload tasks'}
+                >⟳</button>
+                <button
+                    class={`pl-btn muted${showConfig ? ' active' : ''}`}
+                    onClick={() => setShowConfig(s => !s)}
+                    title="Configure scope (include/exclude subtrees)"
+                >
+                    ⚙
+                    {subtreeCount > 0 && (
+                        <span class="pl-badge">
+                            {config.mode === 'include' ? '+' : '−'}{subtreeCount}
+                        </span>
+                    )}
+                </button>
                 <FilterDropdown
                     allTasks={allTasks}
                     filters={filters}
@@ -1485,6 +2073,10 @@ function PlannerApp() {
                     overrides={colorOverrides}
                 />
             </div>
+
+            {showConfig && (
+                <ConfigPanel config={config} onChange={setConfig} />
+            )}
 
             <CapturePanel onCapture={capture} working={capturing} />
 
@@ -1521,6 +2113,7 @@ function PlannerApp() {
                             onCardClick={onCardClick}
                             onCardMarkDone={markDone}
                             onCardSetProgress={setProgress}
+                            onCardDismissOverdue={dismissOverdue}
                             onCardDragStart={onCardDragStart}
                             onCardDragEnd={onCardDragEnd}
                             onDragOver={(e) => onZoneDragOver(col.key, e)}

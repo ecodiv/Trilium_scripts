@@ -65,21 +65,21 @@ The planner scans all text notes in the whole Trilium database. Archived notes a
 
 The weekly planner is a **Render Note** that runs inside Trilium as a regular note view. Its state and configuration are stored in a small JSON note that you create once. The underlying code is stored in a JSX note.
 
-To set up the weekly planner, download `WeeklyPlanner.zip` and import it into Trilium. The imported notes behave like a custom plugin. The import contains three files:
-
-1.  `planner.jsx`, the code that runs the planner
-2.  `planner_data.json`, the state note
+To set up the weekly planner, download `WeeklyPlanner.zip` and import it into Trilium. The imported notes behave like a custom plugin. The import contains one file, `planner.jsx`, which contains the code that runs the planner.
 
 > [!TIP]
-> For better organisation, you may want to import everything inside a parent note such as `Tools`, `Plugins`, or `Addons`.
+> For better organisation, you may want to import the note under parent note such as `Tools`, `Plugins`, or `Addons`.
 
 After importing:
 
-1.  Create a note of type **Render** anywhere in your tree.
-2.  Add a relation `~renderNote` from the Render note to the imported `planner.jsx` note.
+1. **Options → Code Notes → enable "JSX"**
+2.  Create a note of type **Render** anywhere in your tree.
+3.  Add a relation `~renderNote` from the Render note to the imported `planner.jsx` note.
 3.  Open the Render note to run the planner.
-4.  A #plannerdata note is auto-created as a child of the JSX note on first load. This holds the planner data, and normally you should not need to interact with this note.
-
+4. Open the Render note. The planner will auto-create two helper notes
+   as children of the JSX note on first run:
+   - `Planner — State` (`#plannerdata`) — holds JSON state: week assignments, filters, UI preferences.
+   - `Planner — Config` (`#plannerConfig`) — holds scope config (which subtrees to include or exclude from scanning).
 
 ### First test
 
@@ -158,6 +158,8 @@ Tasks without a planned date live in the Backlog column. Drag a task from a day 
 
 _Figure 4. Clear the selected week_
 
+If you scheduled a task for a date that's now in the past (e.g. you didn't open the planner for a few weeks), the task now appears in the backlog of every week with a small ⚠ badge showing its original date. Drag it to a new day to reschedule. If you want to simply remove the old date without rescheduling, click the little `×` on the overdue badge (appears  when hovering over it) to remove the badge.
+
 ### Scheduling by drag & drop
 
 On the desktop, drag a card between Backlog and any day column. A blue line shows where the card will land. Drop position is preserved within a day. The planner remembers card order per day, not just which day a task belongs to.
@@ -229,7 +231,38 @@ From left to right:
 
 Use the reload button after you have edited tasks in source notes to get those into the weekly planner (this does not happen automatically)
 
-## Configuration
+## Filter what gets scanned
+
+By default the planner scans every text note in your database for `TODO`, `IDEA`, `CHECK`, `TOREAD`, and `DEFER` prefixes. On large bases this can be slow, and you may not want every task on screen anyway. The **⚙ button** in the header opens a config panel that lets you restrict the scan to (or away from) specific subtrees.
+
+**Modes**
+
+- **Exclude** *(default)* — scan everything *except* the listed subtrees. 
+- **Include** — scan *only* the listed subtrees. 
+
+**Adding subtrees**
+
+Drag a note from the Trilium tree into the drop zone. Multi-select drags are supported. Drop a selection to add all of them at once. Adding a subtree includes that note *and* all its descendants (branches are walked recursively, up to 50 levels deep).
+
+**Removing subtrees**
+
+Click the × on the chip for the subtree you want to remove.
+
+**Persistence**
+
+The configuration is stored in `#plannerConfig` and survives reloads. The little badge on the ⚙ button (e.g. `+3` or `−2`) shows how many subtrees are configured and in which mode.
+
+**What happens to scheduled tasks when a filter is set or changed**
+
+Tasks have their schedule stored by task ID in `#plannerdata`. If you include a filter so that a previously-scheduled task falls outside it, the task disappears from the board. However, its schedule is *kept*. Widen scope again later and the task reappears on the day you'd planned for. Nothing is lost. But it is important to keep this in mind if you are several weeks down the line.
+
+**Empty Include**
+
+If you switch to Include mode but haven't added any subtrees, the scan is skipped entirely (it would otherwise scan nothing). The ⟳ button is disabled with a tooltip, and the panel shows a hint reminding you to
+drag in at least one subtree. 
+
+
+## Data storage
 
 The weekly planner uses the `planner_data.json` note to store which tasks are scheduled to which days, the order of cards within a day, the backlog width, and your active filters.
 
