@@ -19,6 +19,7 @@
   * [Quick capture](#quick-capture)
   * [Tags](#tags)
   * [Filtering](#filtering)
+  * [Week, work week, and day views](#week-work-week-and-day-views)
   * [Header controls](#header-controls)
 * [Filter what gets scanned](#filter-what-gets-scanned)
 * [Data storage](#data-storage)
@@ -79,8 +80,8 @@ After importing:
 3.  Open the Render note to run the planner.
 4. Open the Render note. The planner will auto-create two helper notes
    as children of the JSX note on first run:
-   - `Planner — State` (`#plannerdata`) — holds JSON state: week assignments, filters, UI preferences.
-   - `Planner — Config` (`#plannerConfig`) — holds scope config (which subtrees to include or exclude from scanning).
+    - `Planner — State` (`#plannerdata`) — JSON state: day assignments, card order, filters, view mode, backlog width.
+    - `Planner — Config` (`#plannerConfig`) — scan filter: which subtrees to include or exclude.
 
 ### First test
 
@@ -216,19 +217,35 @@ If no kinds are selected, all kinds show. If no tags are selected, tag filtering
 
 Filters persist across reloads and are stored in the `#plannerdata` JSON.
 
+### Week, work week, and day views
+
+The planner can show three different column ranges. Use the **Week / Work / Day** toggle in the header to switch between them:
+
+| View | Columns shown |
+| --- | --- |
+| **Week** *(default)* | Backlog plus all seven days, Monday to Sunday. |
+| **Work** | Backlog plus the work week, Monday to Friday. |
+| **Day** | Backlog plus a single day. |
+
+The `‹` and `›` buttons step by **one week** in Week and Work views, and by **one day** in Day view. The **today** button jumps back to the current week and today.
+
+Your chosen view is remembered between sessions (stored in `#plannerdata` as `_viewMode`). The week or day you have navigated to is *not* remembered — the planner always opens on the current week / today.
+
 ### Header controls
 
 From left to right:
 
 | Control | Action |
 | --- | --- |
-| **‹** | Previous week |
-| **›** | Next week |
-| **today** | Jump to the current week. Only visible when you are not already viewing the current week. |
-| **N/M planned** | N tasks scheduled this week out of M total tasks |
-| **Filter** | Open the filter dropdown |
-| **↺** | Clear all planning for the currently visible week. The planner asks for confirmation first. |
+| **‹** | Previous week (Week/Work) or previous day (Day) |
+| **›** | Next week (Week/Work) or next day (Day) |
+| **Week / Work / Day** | Switch the visible column range (see [Week, work week, and day views](#week-work-week-and-day-views)) |
+| **today** | Jump to the current week and today. Only visible when you are not already on the current range. |
+| **N/M planned** | N tasks scheduled in the visible range out of M total tasks |
+| **↺** | Clear all planning for the visible range (this day, work week, or week). The planner asks for confirmation first. |
 | **⟳** | Re-scan all notes for tasks |
+| **⚙** | Open the scan-scope config panel (include/exclude subtrees) |
+| **Filter** | Open the filter dropdown |
 
 Use the reload button after you have edited tasks in source notes to get those into the weekly planner (this does not happen automatically)
 
@@ -265,7 +282,7 @@ drag in at least one subtree.
 
 ## Data storage
 
-The weekly planner uses the `planner_data.json` note to store which tasks are scheduled to which days, the order of cards within a day, the backlog width, and your active filters.
+The weekly planner uses the `#plannerdata` note to store which tasks are scheduled to which days, the order of cards within a day, the backlog width, your chosen view (week/work/day), and your active filters.
 
 You do not normally need to edit this note's content. To change a setting, edit the **attributes (labels)** of the `#plannerdata` note. After changing a label, refresh the planner with `Shift + Ctrl + R`, the `⟳` button, or a page reload.
 
@@ -309,6 +326,7 @@ The `#plannerdata` note's content is a JSON document storing:
 | Within-day ordering | `_order: { ISO-date: [taskIds...] }` |
 | Saved backlog width | `_backlogWidth: pixels` |
 | Saved filters | `_filters: { kinds, tags }` |
+| Saved view mode | `_viewMode: "week" \| "work" \| "day"` |
 
 A populated file looks roughly like this:
 
@@ -324,6 +342,7 @@ A populated file looks roughly like this:
     ]
   },
   "_backlogWidth": 320,
+  "_viewMode": "week",
   "_filters": { "kinds": [], "tags": ["work"] }
 }
 ```

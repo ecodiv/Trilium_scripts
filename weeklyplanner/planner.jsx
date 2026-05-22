@@ -28,6 +28,10 @@
  *   @date suffix           →  auto-schedules. accepts: @YYYY-MM-DD, @today,
  *                             @tomorrow, @mon..@sun
  *   #tag suffix            →  filterable. Multiple tags allowed.
+ *   Week/Work/Day toggle  →  switch the visible columns: full week (Mon–Sun),
+ *                             work week (Mon–Fri), or a single day. The choice
+ *                             is remembered in #plannerdata (_viewMode). ‹ › step
+ *                             by week (Week/Work) or by day (Day); "today" resets.
  *   ⚙ in header            →  open scope config (include/exclude subtrees).
  *                             Drag notes from the tree to add. Auto-saves and
  *                             rescans. Changes don't clear your schedules.
@@ -40,10 +44,12 @@
  *   2. Create a new code note, language: JSX
  *   3. Paste this code into it
  *   4. In your Render note, set ~renderNote → this JSX note
- *   5. Two child notes are auto-created under this JSX note on first load:
- *        #plannerdata    — JSON state (week assignments, filters, UI prefs)
- *        #plannerConfig  — scope config (include/exclude subtrees, set via
- *                          the ⚙ button in the planner header)
+ *   5. Two child notes are auto-created under this JSX note on first load,
+ *      both as JSON code notes (so the rich-text editor can't mangle them):
+ *        #plannerdata    — UI state: day assignments, filters, view mode,
+ *                          backlog width
+ *        #plannerConfig  — scan scope: include/exclude subtrees (set via the
+ *                          ⚙ button)
  *      No manual setup needed.
  *      Optional labels (all on the #plannerdata note):
  *        #wp_backlog_width=320       default backlog column width (px)
@@ -80,8 +86,7 @@ const KINDS = {
 const KIND_KEYS = Object.keys(KINDS);
 const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
 
-/* Color overrides come from labels on the #plannerdata note:
-   #wp_todo, #wp_idea, #wp_check, #wp_toread.*/
+/* Per-kind color overrides from #wp_* labels on #plannerdata (see header). */
 function getKindColor(kind, overrides) {
     if (overrides && overrides[kind]) return overrides[kind];
     return KINDS[kind]?.color || '#666';
@@ -223,13 +228,7 @@ async function loadPlannerData() {
             if (val) colorOverrides[kind] = val;
         }
 
-        // Theme overrides — any CSS color string. Missing label → use built-in.
-        //   #wp_bg_task            task card background
-        //   #wp_bg_panel           column / panel background
-        //   #wp_color_done_text    grey of marked-done lines in source
-        //   #wp_color_done_btn     mark-done button color
-        //   #wp_color_date_tag     inline @date token color
-        //   #wp_color_progress     progress-bar fill
+        // Theme overrides — any CSS color string per #wp_* label (see header).
         const themeLabelMap = {
             bgTask:         'wp_bg_task',
             bgPanel:        'wp_bg_panel',
@@ -244,7 +243,7 @@ async function loadPlannerData() {
             if (val) themeOverrides[key] = val;
         }
 
-        // Note content holds the JSON planner state
+        // Note content holds the JSON planner state.
         let data = {};
         try {
             const raw = note.getContent();
@@ -266,21 +265,21 @@ async function savePlannerData(plannerData) {
 }
 
 /* Ensure the #plannerdata state note exists. If missing, create it as a
-   child of parentNoteId (the JSX note that hosts this script) with the
-   required #plannerdata label and a sensible icon, seeded with an empty
-   JSON object. Returns { created, noteId } — created=true on first run.
-   Safe to call repeatedly: a no-op when the note already exists. */
+   JSON code note (type:'code', mime:'application/json') under parentNoteId,
+   seeded with '{}'. Returns { created, noteId }. Idempotent. */
 async function ensurePlannerNote(parentNoteId) {
     return await runAsyncOnBackendWithManualTransactionHandling(
         async (parentId) => {
             let note = api.getNoteWithLabel('plannerdata');
             if (note) return { created: false, noteId: note.noteId };
 
-            const created = await api.createTextNote(
-                parentId,
-                'Planner — State',
-                '{}'
-            );
+            const created = await api.createNewNote({
+                parentNoteId: parentId,
+                title: 'Planner — State',
+                type: 'code',
+                mime: 'application/json',
+                content: '{}',
+            });
             note = created.note;
             await note.setLabel('plannerdata', '');
             await note.setLabel('hidePromotedAttributes', '');
@@ -292,10 +291,9 @@ async function ensurePlannerNote(parentNoteId) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CONFIG NOTE — scope config (include/exclude subtrees)
-   Stored as a separate child note (#plannerConfig) with JSON body:
+   CONFIG NOTE — scan scope only (#plannerConfig), JSON body:
      { mode: 'exclude'|'include', subtrees: [{noteId, title}, ...] }
-   Modelled directly on knowledge-debt's #kdConfig.
+   UI preferences (view mode, filters, …) live in #plannerdata, not here.
 ══════════════════════════════════════════════════════════════════ */
 
 const PLANNER_CONFIG_LABEL = 'plannerConfig';
@@ -340,19 +338,21 @@ async function savePlannerConfig(config) {
 }
 
 /* Ensure the #plannerConfig note exists, mirroring ensurePlannerNote.
-   Created as a child of parentNoteId on first run, seeded with the
-   defaults. Idempotent. */
+   Created as a JSON code note under parentNoteId on first run, seeded with
+   the defaults. Idempotent. */
 async function ensurePlannerConfig(parentNoteId) {
     return await runAsyncOnBackendWithManualTransactionHandling(
         async (parentId, label, defaultsJson) => {
             let note = api.getNoteWithLabel(label);
             if (note) return { created: false, noteId: note.noteId };
 
-            const created = await api.createTextNote(
-                parentId,
-                'Planner — Config',
-                defaultsJson
-            );
+            const created = await api.createNewNote({
+                parentNoteId: parentId,
+                title: 'Planner — Config',
+                type: 'code',
+                mime: 'application/json',
+                content: defaultsJson,
+            });
             note = created.note;
             await note.setLabel(label, '');
             await note.setLabel('hidePromotedAttributes', '');
@@ -384,13 +384,6 @@ function parseDragPayload(dt) {
     }
 }
 
-/* Build the GLOB filter for the SQL prefilter.
-   Case-sensitive (matches the case-sensitive prefix rule).
-   Returns: "b.content GLOB '*TODO *' OR b.content GLOB '*IDEA *' OR ..." */
-function buildPrefixGlobClause() {
-    return KIND_KEYS.map(k => `b.content GLOB '*${k} *'`).join(' OR ');
-}
-
 /* Scan all text notes for prefixed lines.
    `config`        — { mode: 'include'|'exclude', subtrees: [{noteId,title}, ...] }
    `systemNoteIds` — noteIds to always skip (this JSX note + state + config) */
@@ -400,12 +393,11 @@ async function fetchAllTasks({
     systemNoteIds = [],
 } = {}) {
     const kindRe = KIND_RE_SOURCE;
-    const prefixClause = buildPrefixGlobClause();
     const cfgMode = config.mode === 'include' ? 'include' : 'exclude';
     const cfgSubtreeRoots = (config.subtrees || []).map(s => s.noteId).filter(Boolean);
 
     const groups = await runOnBackend((
-        kindReSource, includeArchived, prefixGlobClause,
+        kindReSource, includeArchived,
         mode, subtreeRoots, sysNoteIds
     ) => {
         const findRe = new RegExp(
@@ -489,30 +481,19 @@ async function fetchAllTasks({
             ? `n.noteId NOT IN (${sqlList(sysNoteIds)})`
             : '1=1';
 
-        // Fast path: SQL prefilter via JOIN on blobs.
-        // Returns only notes whose content matches at least one prefix.
-        let rows;
-        try {
-            rows = api.sql.getRows(
-                "SELECT n.noteId, n.title FROM notes n " +
-                "JOIN blobs b ON b.blobId = n.blobId " +
-                "WHERE n.isDeleted = 0 AND n.isProtected = 0 AND n.type = 'text' " +
-                "AND (" + prefixGlobClause + ") " +
-                "AND " + SCOPE_CLAUSE + " " +
-                "AND " + NOT_INFRASTRUCTURE + " " +
-                "ORDER BY n.title COLLATE NOCASE"
-            );
-        } catch (err) {
-            // Fallback for unexpected schema differences: plain SELECT.
-            // Scope and infrastructure filters still apply.
-            rows = api.sql.getRows(
-                "SELECT noteId, title FROM notes n " +
-                "WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text' " +
-                "AND " + SCOPE_CLAUSE + " " +
-                "AND " + NOT_INFRASTRUCTURE + " " +
-                "ORDER BY title COLLATE NOCASE"
-            );
-        }
+        /* Select all text notes in scope, then read content in JS. We don't
+           prefilter on content via SQL GLOB: synced blob rows on server builds
+           are stored in a form GLOB can't see through, so it matched nothing.
+           api.getNote().getContent() decodes transparently and works anywhere.
+           Cost: every in-scope text note is loaded — subsecond even for large
+           bases; #plannerConfig scoping is how users keep big bases fast. */
+        const rows = api.sql.getRows(
+            "SELECT noteId, title FROM notes n " +
+            "WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text' " +
+            "AND " + SCOPE_CLAUSE + " " +
+            "AND " + NOT_INFRASTRUCTURE + " " +
+            "ORDER BY title COLLATE NOCASE"
+        );
 
         const result = [];
         for (const row of rows) {
@@ -527,7 +508,7 @@ async function fetchAllTasks({
             }
         }
         return result;
-    }, [kindRe, scanArchived, prefixClause, cfgMode, cfgSubtreeRoots, systemNoteIds]);
+    }, [kindRe, scanArchived, cfgMode, cfgSubtreeRoots, systemNoteIds]);
 
     return flattenGroups(groups);
 }
@@ -677,12 +658,36 @@ function getWeekCols(offset) {
 
 function weekLabel(cols) {
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    if (!cols || !cols.length) return '';
     const d0 = new Date(cols[0].key + 'T12:00:00');
-    const d1 = new Date(cols[6].key + 'T12:00:00');
+    const d1 = new Date(cols[cols.length - 1].key + 'T12:00:00');
+    if (cols.length === 1) {
+        return `${cols[0].label} ${d0.getDate()} ${months[d0.getMonth()]} ${d0.getFullYear()}`;
+    }
     if (d0.getMonth() === d1.getMonth())
         return `${d0.getDate()}–${d1.getDate()} ${months[d0.getMonth()]} ${d0.getFullYear()}`;
     return `${d0.getDate()} ${months[d0.getMonth()]} – ${d1.getDate()} ${months[d1.getMonth()]} ${d1.getFullYear()}`;
 }
+
+function getDayCol(offset) {
+    const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const base = todayBase();
+    const d = new Date(base);
+    d.setDate(base.getDate() + offset);
+    const iso = toLocalIsoDate(d);
+    return {
+        key: iso,
+        label: labels[d.getDay()],
+        dateStr: `${d.getDate()}/${d.getMonth() + 1}`,
+        isToday: d.getTime() === base.getTime(),
+    };
+}
+
+const VIEW_MODES = {
+    WEEK: 'week',
+    WORK: 'work',
+    DAY:  'day',
+};
 
 /* Short "27 May" / "27 May '25" formatter for the overdue badge.
    Omits the year if it matches the current year. */
@@ -997,6 +1002,36 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-btn.active {
     background:#444; color:#fff; border-color:#444;
 }
+.pl-view-toggle {
+    display:inline-flex; align-items:center; gap:0;
+    border:1px solid #c8c8c8; border-radius:5px; overflow:hidden;
+    background:#fff;
+}
+.pl-view-btn {
+    border:none; border-right:1px solid #d8d8d8;
+    background:#fff; color:#666; padding:3px 9px;
+    font-size:12px; line-height:1.4; cursor:pointer;
+}
+.pl-view-btn:last-child { border-right:none; }
+.pl-view-btn:hover { background:#eee; }
+.pl-view-btn.active { background:#444; color:#fff; font-weight:700; }
+.pl-confirm-overlay {
+    position:fixed; inset:0; z-index:10000;
+    background:rgba(0,0,0,.18);
+    display:flex; align-items:flex-start; justify-content:center;
+    padding-top:76px;
+}
+.pl-confirm-dialog {
+    width:min(420px, calc(100vw - 32px));
+    background:#fff; border:1px solid #c8c8c8; border-radius:8px;
+    box-shadow:0 8px 28px rgba(0,0,0,.20);
+    padding:14px 16px; color:#333;
+}
+.pl-confirm-title { font-size:15px; font-weight:700; margin-bottom:6px; }
+.pl-confirm-body { font-size:13px; color:#666; line-height:1.4; margin-bottom:12px; }
+.pl-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
+.pl-btn.danger { border-color:#d97070; color:#9b3434; }
+.pl-btn.danger:hover { background:#fae9e9; }
 
 /* Overdue badge — shown on cards in the backlog when a task's scheduled
    date is in the past. Subtle warning tint, not alarming red.
@@ -1513,6 +1548,8 @@ function PlannerApp() {
     const [allTasks,    setAllTasks]      = useState([]);
     const [plannerData, setPlannerData]   = useState({});
     const [weekOffset,  setWeekOffset]    = useState(0);
+    const [dayOffset,   setDayOffset]     = useState(0);
+    const [viewMode,    setViewMode]      = useState(VIEW_MODES.WEEK);
     const [backlogWidth, setBacklogWidth] = useState(BACKLOG_WIDTH_DEFAULT);
     const [loading,     setLoading]       = useState(true);
     const [error,       setError]         = useState(null);
@@ -1528,6 +1565,7 @@ function PlannerApp() {
     const [stateNoteId,  setStateNoteId]  = useState(null);  // for scan exclusion
     const [configLoaded, setConfigLoaded] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
+    const [pendingClear, setPendingClear] = useState(null);
     const configSaveDebounceRef = useRef(null);
     const configReloadDebounceRef = useRef(null);
     const skipFirstConfigSaveRef = useRef(true);  // skip the state-from-load save
@@ -1572,22 +1610,32 @@ function PlannerApp() {
                     : 'root';
                 const ensured = await ensurePlannerNote(parentId);
                 if (ensured && ensured.created) {
-                    console.log('Created #plannerdata note as child of dashboard.');
+                    console.log('Created #plannerdata note.');
                 }
                 if (ensured && ensured.noteId) setStateNoteId(ensured.noteId);
                 const ensuredCfg = await ensurePlannerConfig(parentId);
                 if (ensuredCfg && ensuredCfg.created) {
-                    console.log('Created #plannerConfig note as child of dashboard.');
+                    console.log('Created #plannerConfig note.');
                 }
 
-                // Load scope config in parallel with state
+                // Load scope config (scan scope only) and planner state.
+                // The view-mode preference lives in #plannerdata (_viewMode),
+                // alongside the other UI state (_filters, _backlogWidth).
                 const { config: loadedCfg, configNoteId: cfgId } = await loadPlannerConfig();
-                setConfig(loadedCfg);
                 setConfigNoteId(cfgId || (ensuredCfg && ensuredCfg.noteId) || null);
-                setConfigLoaded(true);
 
                 const loaded = await loadPlannerData();
                 const data = loaded.data || {};
+
+                const isValidMode = (m) => [VIEW_MODES.WEEK, VIEW_MODES.WORK, VIEW_MODES.DAY].includes(m);
+                const initialViewMode = isValidMode(data._viewMode) ? data._viewMode : VIEW_MODES.WEEK;
+                data._viewMode = initialViewMode;  // normalise so it round-trips cleanly
+
+                setConfig(loadedCfg);
+                setConfigLoaded(true);
+                setViewMode(initialViewMode);
+                // weekOffset/dayOffset aren't persisted — always open on the
+                // current week/today. (Store them like _viewMode to change that.)
 
                 // Apply persisted UI state from data
                 if (data._filters) {
@@ -1609,10 +1657,8 @@ function PlannerApp() {
                 if (loaded.themeOverrides) setThemeOverrides(loaded.themeOverrides);
                 setScanArchived(loaded.scanArchived !== false);
 
-                // Compute system noteIds to exclude from the scan.
-                // Both ensure helpers return the noteId of the note they
-                // touched (whether created or already-existing), which we
-                // use here so the scan never picks up its own infrastructure.
+                // System noteIds to exclude from the scan (host JSX + state +
+                // config), so the planner never picks up its own infrastructure.
                 const sysIds = [];
                 if (typeof api !== 'undefined' && api.startNote)   sysIds.push(api.startNote.noteId);
                 if (typeof api !== 'undefined' && api.currentNote) sysIds.push(api.currentNote.noteId);
@@ -1623,6 +1669,7 @@ function PlannerApp() {
                 // Skip the initial scan if the user picked Include mode with no subtrees
                 const includeEmpty = loadedCfg.mode === 'include'
                     && (!loadedCfg.subtrees || loadedCfg.subtrees.length === 0);
+
                 let tasks = [];
                 if (!includeEmpty) {
                     tasks = await fetchAllTasks({
@@ -1664,6 +1711,14 @@ function PlannerApp() {
         }));
     }, [filters]);
 
+    /* Persist view mode into #plannerdata (next to _filters); the write
+       triggers the savePlannerData effect above. */
+    const skipFirstViewSync = useRef(true);
+    useEffect(() => {
+        if (skipFirstViewSync.current) { skipFirstViewSync.current = false; return; }
+        setPlannerData(prev => (prev._viewMode === viewMode ? prev : { ...prev, _viewMode: viewMode }));
+    }, [viewMode]);
+
     /* Notes the planner should never scan (this JSX note + state + config).
        Hardcoded into the scan SQL, so a typo'd config can't accidentally
        cause the planner to scan itself. */
@@ -1680,6 +1735,11 @@ function PlannerApp() {
        and surface a hint in the config panel instead. */
     const includeEmpty = config.mode === 'include'
         && (!config.subtrees || config.subtrees.length === 0);
+
+    const scopeConfigKey = useMemo(() => JSON.stringify({
+        mode: config.mode,
+        subtrees: (config.subtrees || []).map(s => s.noteId),
+    }), [config.mode, config.subtrees]);
 
     /* Full reload, used by the ⟳ button. Covers every case
        (note deleted, kind changed, multiple notes edited).
@@ -1737,8 +1797,8 @@ function PlannerApp() {
             reload();
         }, 500);
         return () => clearTimeout(configReloadDebounceRef.current);
-    // eslint-disable-next-line — reload changes whenever config does; that's fine
-    }, [config, configLoaded]);
+    // eslint-disable-next-line — reload uses the latest config; only scope changes rescan.
+    }, [scopeConfigKey, configLoaded]);
 
     /* Single-note reload — used after mark-done and capture, 
        Replaces all tasks belonging to that note with the freshly-scanned ones,
@@ -1980,23 +2040,49 @@ function PlannerApp() {
         }
     }, []);
 
-    const clearWeek = useCallback((weekKeys) => {
-        if (!confirm(`Clear planning for this week?`)) return;
+    const requestClearVisible = useCallback((e, visibleKeys, scopeLabel) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        setPendingClear({
+            keys: Array.from(visibleKeys),
+            scopeLabel,
+        });
+    }, []);
+
+    const confirmClearVisible = useCallback(() => {
+        if (!pendingClear) return;
+        const keys = new Set(pendingClear.keys);
         setPlannerData(prev => {
             const next = { ...prev };
             for (const t of allTasks) {
-                if (weekKeys.has(next[t.id])) delete next[t.id];
+                if (keys.has(next[t.id])) delete next[t.id];
             }
             return next;
         });
-    }, [allTasks]);
+        setPendingClear(null);
+    }, [allTasks, pendingClear]);
+
+    const cancelClearVisible = useCallback(() => {
+        setPendingClear(null);
+    }, []);
 
     /* Derived */
     const mobile = useMobile();
     const weekCols = useMemo(() => getWeekCols(weekOffset), [weekOffset]);
-    const wkLabel  = useMemo(() => weekLabel(weekCols), [weekCols]);
-    const weekKeys = useMemo(() => new Set(weekCols.map(c => c.key)), [weekCols]);
-    const isCurrentWeek = weekOffset === 0;
+    const dayCol = useMemo(() => getDayCol(dayOffset), [dayOffset]);
+    const visibleDateCols = useMemo(() => {
+        if (viewMode === VIEW_MODES.DAY) return [dayCol];
+        if (viewMode === VIEW_MODES.WORK) return weekCols.slice(0, 5);
+        return weekCols;
+    }, [viewMode, weekCols, dayCol]);
+    const wkLabel  = useMemo(() => weekLabel(visibleDateCols), [visibleDateCols]);
+    const visibleKeys = useMemo(() => new Set(visibleDateCols.map(c => c.key)), [visibleDateCols]);
+    const isCurrentRange = viewMode === VIEW_MODES.DAY ? dayOffset === 0 : weekOffset === 0;
+    const clearScopeLabel = viewMode === VIEW_MODES.DAY
+        ? 'day'
+        : (viewMode === VIEW_MODES.WORK ? 'workweek' : 'week');
 
     const filteredTasks = useMemo(
         () => applyFilters(allTasks, filters),
@@ -2004,7 +2090,7 @@ function PlannerApp() {
     );
 
     const total   = filteredTasks.length;
-    const planned = filteredTasks.filter(t => weekKeys.has(plannerData[t.id])).length;
+    const planned = filteredTasks.filter(t => visibleKeys.has(plannerData[t.id])).length;
     // Recomputed every render — cheap, and keeps overdue accurate if the
     // planner is left open across midnight.
     const todayIso = toLocalIsoDate(todayBase());
@@ -2020,8 +2106,18 @@ function PlannerApp() {
 
     const allCols = [
         { key: 'backlog', label: 'Backlog', dateStr: backlogLabel, isToday: false, isBacklog: true },
-        ...weekCols.map(c => ({ ...c, isBacklog: false })),
+        ...visibleDateCols.map(c => ({ ...c, isBacklog: false })),
     ];
+
+    const moveDateRange = useCallback((delta) => {
+        if (viewMode === VIEW_MODES.DAY) setDayOffset(d => d + delta);
+        else setWeekOffset(w => w + delta);
+    }, [viewMode]);
+
+    const jumpToToday = useCallback(() => {
+        setWeekOffset(0);
+        setDayOffset(0);
+    }, []);
 
     if (loading && allTasks.length === 0) {
         return <div style={{ padding: '24px', color: '#888' }}>Loading…</div>;
@@ -2034,18 +2130,47 @@ function PlannerApp() {
         <div class="pl-root">
             <div class="pl-header">
                 <span style={{ fontSize: '18px', fontWeight: 700 }}>Planner</span>
-                <button class="pl-btn icon" onClick={() => setWeekOffset(w => w - 1)} title="Previous week">‹</button>
+                <button
+                    class="pl-btn icon"
+                    onClick={() => moveDateRange(-1)}
+                    title={viewMode === VIEW_MODES.DAY ? 'Previous day' : 'Previous week'}
+                >‹</button>
                 <span style={{ fontSize: '16px', color: '#666', whiteSpace: 'nowrap' }}>
                     {wkLabel}
                 </span>
-                <button class="pl-btn icon" onClick={() => setWeekOffset(w => w + 1)} title="Next week">›</button>
-                {!isCurrentWeek && (
-                    <button class="pl-btn muted" onClick={() => setWeekOffset(0)}>today</button>
+                <button
+                    class="pl-btn icon"
+                    onClick={() => moveDateRange(1)}
+                    title={viewMode === VIEW_MODES.DAY ? 'Next day' : 'Next week'}
+                >›</button>
+                <div class="pl-view-toggle" title="Choose planner date columns">
+                    <button
+                        class={`pl-view-btn${viewMode === VIEW_MODES.WEEK ? ' active' : ''}`}
+                        onClick={() => setViewMode(VIEW_MODES.WEEK)}
+                        title="Show Monday to Sunday"
+                    >Week</button>
+                    <button
+                        class={`pl-view-btn${viewMode === VIEW_MODES.WORK ? ' active' : ''}`}
+                        onClick={() => setViewMode(VIEW_MODES.WORK)}
+                        title="Show Monday to Friday"
+                    >Work</button>
+                    <button
+                        class={`pl-view-btn${viewMode === VIEW_MODES.DAY ? ' active' : ''}`}
+                        onClick={() => setViewMode(VIEW_MODES.DAY)}
+                        title="Show one day"
+                    >Day</button>
+                </div>
+                {!isCurrentRange && (
+                    <button class="pl-btn muted" onClick={jumpToToday}>today</button>
                 )}
                 <span style={{ fontSize: '14px', color: '#666', marginLeft: 'auto' }}>
                     {planned}/{total} planned
                 </span>
-                <button class="pl-btn muted" onClick={() => clearWeek(weekKeys)} title="Clear this week">↺</button>
+                <button
+                    class="pl-btn muted"
+                    onClick={(e) => requestClearVisible(e, visibleKeys, clearScopeLabel)}
+                    title={`Clear this ${clearScopeLabel}`}
+                >↺</button>
                 <button
                     class="pl-btn muted"
                     onClick={reload}
@@ -2074,6 +2199,25 @@ function PlannerApp() {
                 />
             </div>
 
+            {pendingClear && (
+                <div
+                    class="pl-confirm-overlay"
+                    onClick={cancelClearVisible}
+                    onMouseDown={(e) => e.stopPropagation()}
+                >
+                    <div class="pl-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+                        <div class="pl-confirm-title">Clear this {pendingClear.scopeLabel}?</div>
+                        <div class="pl-confirm-body">
+                            This removes the visible planning assignments only. The tasks stay in their source notes and unplanned tasks are not deleted.
+                        </div>
+                        <div class="pl-confirm-actions">
+                            <button class="pl-btn muted" onClick={cancelClearVisible}>Cancel</button>
+                            <button class="pl-btn danger" onClick={confirmClearVisible}>Clear</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showConfig && (
                 <ConfigPanel config={config} onChange={setConfig} />
             )}
@@ -2094,7 +2238,7 @@ function PlannerApp() {
                     } else {
                         widthStyle = mobile
                             ? { width: '130px', flex: '0 0 auto' }
-                            : { flex: '1 1 0', minWidth: '120px' };
+                            : { flex: '1 1 0', minWidth: viewMode === VIEW_MODES.DAY ? '260px' : '120px' };
                     }
 
                     const marker = insertMarker.col === col.key ? insertMarker.beforeId : null;

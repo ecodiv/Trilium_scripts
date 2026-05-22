@@ -14,7 +14,7 @@ from pathlib import Path
 # ============================================================================
 
 # Path to the markdown file you want a TOC for.
-INPUT_FILE = "/home/paulo/dev/Trilium_weekly_planner/knowledgedebt/README.md"
+INPUT_FILE = "/home/paulo/dev/Trilium_scripts/weeklyplanner/README.md"
 
 # Where to write the TOC. Options:
 #   None              -> print to stdout only
