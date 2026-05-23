@@ -3,7 +3,7 @@
  * ║          Task Planner — TriliumNext (Preact)                ║
  * ║                                                             ║
  * ║   Backlog │ Mon │ Tue │ Wed │ Thu │ Fri │ Sat │ Sun         ║
- * ╚══════════════════════════════════════════════════════════════╝
+ * ╚══════════════════════════════════════════════════════════════╝ 
  *
  * Collects line-prefixed tasks from all text notes:
  *   • TODO   <text>   — actionable task     (orange)
@@ -193,6 +193,70 @@ function parseTaskMeta(rawText) {
         if (iso) return { isoDate: iso, tags };
     }
     return { isoDate: null, tags };
+}
+
+/* Inline recurrence token: `~<n><unit>`, unit = d | w.
+   Mirrors the single-`@date` rule: bounded by whitespace/line ends, and only
+   the FIRST token on a line is honoured (extras are ignored).
+
+   Returns the interval as a STRING-backed record — { token, n, unit } — rather
+   than a pre-computed day count, so a future calendar-rule grammar
+   (`~weekly:mon`, `~mon`) can be added as a pure parser extension without
+   touching the stored shape. Returns null when no valid token is present, in
+   which case the task is an ordinary one-off.
+
+   v1 units: `d` (days) and `w` (weeks, n×7) only. For a monthly cadence, use
+   weeks (e.g. `~4w`). The interval never contributes a date to the note text,
+   so it cannot contradict the column the card sits in. */
+function parseInterval(rawText) {
+    const m = rawText.match(/(^|\s)~(\d+)([dw])(?=\s|$)/);
+    if (!m) return null;
+    const n = parseInt(m[2], 10);
+    if (!Number.isFinite(n) || n < 1) return null;   // ~0d etc. is not recurring
+    const unit = m[3];
+    return { token: `${n}${unit}`, n, unit };
+}
+
+/* Advance an ISO date by an interval record from parseInterval.
+   Both units are plain day arithmetic (`w` = n×7 days). Operates in local
+   time and returns a local 'YYYY-MM-DD'. */
+function addIntervalToIso(iso, interval) {
+    const [y, mo, d] = iso.split('-').map(Number);
+    const date = new Date(y, mo - 1, d);   // local midnight, no UTC shift
+    const days = interval.unit === 'w' ? interval.n * 7 : interval.n;
+    date.setDate(date.getDate() + days);
+    return toLocalIsoDate(date);
+}
+
+/* Next occurrence for a recurring task on completion.
+
+   Anchors to the task's own cadence grid (its current due date), not to the
+   completion day, so each ✓ advances by exactly one interval. The grid is
+   `dueIso + k·interval`. We return the first slot strictly after today, which
+   means:
+     • On-time / early completion → one step (due + interval).
+     • Overdue → roll forward by the interval, SKIPPING every missed slot, until
+       we reach the next future date on the same grid (no pile-up of misses,
+       and never lands in the past).
+   With no stored due date (an unscheduled recurring task), the completion day
+   establishes the anchor → today + interval.
+   Always advances at least once, so a task can never re-land on today. */
+function nextRecurDate(dueIso, interval, todayIso) {
+    let next = addIntervalToIso(dueIso || todayIso, interval);
+    let guard = 0;
+    while (next <= todayIso && guard++ < 10000) {
+        next = addIntervalToIso(next, interval);
+    }
+    return next;
+}
+
+/* Human-readable cadence for the recurring glyph's tooltip, e.g.
+   "Repeats every 7 days", "Repeats every week", "Repeats every 2 weeks". */
+function recurCadenceLabel(interval) {
+    const word = interval.unit === 'w' ? 'week' : 'day';
+    return interval.n === 1
+        ? `Repeats every ${word}`
+        : `Repeats every ${interval.n} ${word}s`;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -590,13 +654,28 @@ function flattenGroups(groups) {
     for (const g of groups) {
         for (const t of g.tasks) {
             const meta = parseTaskMeta(t.text);
-            const id = `${g.noteId}::${t.kind}::${t.text.replace(/\s+/g, '_').slice(0, 48)}`;
+            const interval = parseInterval(t.text);   // null = ordinary one-off
+            // The id is the #plannerdata key, so it must stay STABLE across edits
+            // to the recurrence cadence. The interval token is metadata, not
+            // content — editing ~2d→~1w (the spec's way to change/stop a cadence)
+            // must not re-key the task, which would orphan its date, _order and
+            // _progress and leave a stale entry behind. So slug from the line with
+            // the interval token stripped. (@date is left in for backward compat;
+            // it has the same latent issue but stripping it would re-key existing
+            // scheduled one-off tasks.)
+            const idText = t.text
+                .replace(/(^|\s)~\d+[dw](?=\s|$)/g, ' ')
+                .trim()
+                .replace(/\s+/g, '_')
+                .slice(0, 48);
+            const id = `${g.noteId}::${t.kind}::${idText}`;
             all.push({
                 id,
                 kind:         t.kind,
                 text:         t.text,
                 tags:         meta.tags,
                 isoDate:      meta.isoDate,
+                interval,                              // { token, n, unit } | null
                 indexForKind: t.indexForKind,
                 noteId:       g.noteId,
                 noteTitle:    g.title,
@@ -857,6 +936,10 @@ function buildStyle(theme) {
                 padding:1px 5px; border-radius:3px; margin-right:5px;
                 vertical-align:middle; letter-spacing:.05em; color:#fff; }
 .pl-task-date { color:${theme.colorDateTag}; }
+/* Recurring marker, rendered INSIDE the kind chip so it stands out on the
+   coloured pill. Static (never animated): an animated spinner would read as
+   "loading" and collide with the done-button's .working state. */
+.pl-recur-mark { margin-left:4px; font-weight:400; opacity:.95; cursor:default; }
 
 .pl-drop { display:none; height:40px; border:2px dashed ${theme.border};
            border-radius:5px; opacity:.5; }
@@ -1112,13 +1195,16 @@ function injectStyle(css) {
    COMPONENTS
 ══════════════════════════════════════════════════════════════════ */
 
-function KindChip({ kind, overrides }) {
+function KindChip({ kind, overrides, recurring, recurTitle }) {
     const k = KINDS[kind];
     if (!k) return null;
     const color = getKindColor(kind, overrides);
     return (
         <span class="pl-task-kind" style={{ background: color }}>
             {k.label}
+            {recurring && (
+                <span class="pl-recur-mark" title={recurTitle} aria-label={recurTitle}>↻</span>
+            )}
         </span>
     );
 }
@@ -1128,9 +1214,10 @@ function KindChip({ kind, overrides }) {
    Both use the same .pl-task-date CSS rule so they share the muted look. */
 function renderTaskText(text) {
     const parts = [];
-    // Match @word or #word at start-of-text or after whitespace.
-    // \S+ for @date; [A-Za-z][\w-]* for #tag (matches the parseTaskMeta rule).
-    const re = /(^|\s)(@\S+|#[A-Za-z][\w-]*)/g;
+    // Match @word, #word, or ~Nd/~Nw at start-of-text or after whitespace.
+    // \S+ for @date; [A-Za-z][\w-]* for #tag; \d+[dw] for the interval token
+    // (matches the parseInterval rule). All three share the muted .pl-task-date look.
+    const re = /(^|\s)(@\S+|#[A-Za-z][\w-]*|~\d+[dw](?=\s|$))/g;
     let last = 0;
     let m;
     while ((m = re.exec(text)) !== null) {
@@ -1153,7 +1240,12 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
         e.stopPropagation();
         if (working) return;
         setWorking(true);
-        try { await onMarkDone(task); }
+        try {
+            await onMarkDone(task);
+            // A recurring card isn't removed — it just moves columns — so there's
+            // no unmount to discard the spinner. Clear it explicitly.
+            if (task.interval) setWorking(false);
+        }
         catch (err) { console.error(err); setWorking(false); }
     };
 
@@ -1187,7 +1279,12 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
                 ✓
             </button>
             <div style={{ paddingRight: '20px' }}>
-                <KindChip kind={task.kind} overrides={overrides} />
+                <KindChip
+                    kind={task.kind}
+                    overrides={overrides}
+                    recurring={!!task.interval}
+                    recurTitle={task.interval ? recurCadenceLabel(task.interval) : undefined}
+                />
                 {task.isOverdue && (
                     <span class="pl-overdue-badge">
                         <span
@@ -1845,6 +1942,41 @@ function PlannerApp() {
 
     /* Mark done: optimistic UI (remove immediately) + per-note re-fetch (correct indices) */
     const markDone = useCallback(async (task) => {
+        // ── Recurring guard (one new branch, decided before any work) ──────
+        // A task carrying an interval token (~7d) does not get marked DONE.
+        // Completion advances the due date along the task's own cadence grid
+        // (current due + interval, skipping any missed past slots — see
+        // nextRecurDate), relocates the card to that column, and leaves the note
+        // line untouched so the rule survives to recur. Only #plannerdata
+        // changes — no note write, no re-scan, and the card stays in `allTasks`
+        // (it relocates, not removes).
+        if (task.interval) {
+            const todayIso = toLocalIsoDate(todayBase());
+            setPlannerData(prev => {
+                let next = { ...prev };
+                const oldDay = next[task.id];
+                // Advance from the current due date (or today if unscheduled).
+                const newDate = nextRecurDate(oldDay, task.interval, todayIso);
+                // Pull the card out of its old column's manual order.
+                if (oldDay && oldDay !== newDate && next._order && next._order[oldDay]) {
+                    next._order = {
+                        ...next._order,
+                        [oldDay]: next._order[oldDay].filter(id => id !== task.id),
+                    };
+                }
+                next[task.id] = newDate;                       // advance + relocate
+                next = withOrderUpdate(next, newDate, task.id, null, allTasks);
+                // A completed occurrence starts a fresh cycle: clear its progress.
+                if (next._progress && task.id in next._progress) {
+                    const nextProgress = { ...next._progress };
+                    delete nextProgress[task.id];
+                    next._progress = nextProgress;
+                }
+                return next;
+            });
+            return;   // never reach the DONE path below
+        }
+
         // Optimistic: remove from local state
         setAllTasks(prev => prev.filter(t => t.id !== task.id));
         setPlannerData(prev => {
@@ -1874,7 +2006,7 @@ function PlannerApp() {
             alert(`Mark done failed: ${err.message || err}`);
             await reload();
         }
-    }, [reload, reloadNote, theme]);
+    }, [reload, reloadNote, theme, allTasks]);
 
     /* Dismiss an overdue badge: clears the stored schedule for this task.
        The task remains in the source note and reappears as a normal

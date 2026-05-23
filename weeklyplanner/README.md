@@ -16,6 +16,7 @@
   * [Backlog](#backlog)
   * [Scheduling by drag & drop](#scheduling-by-drag-drop)
   * [Scheduling by @date](#scheduling-by-date)
+  * [Recurring tasks](#recurring-tasks)
   * [Quick capture](#quick-capture)
   * [Tags](#tags)
   * [Filtering](#filtering)
@@ -137,10 +138,10 @@ Each task is rendered as a small card showing the kind chip in its colour, the t
 
 _Figure 2: Task cards with ✓ button visible on hover, kind chip, date suffix and tag pil_
 
-The `✓` button in the top-right corner is the mark-done action. On desktop it appears on hover. On touch devices it is always visible. Clicking it removes the task from the planner. The line stays in your source note, greyed out, as a record of completion. You can also set progress, see below.
+The `✓` button in the top-right corner is the mark-done action. On desktop it appears on hover. On touch devices it is always visible. Clicking it can do two things:
 
-> [!NOTE]
-> Done items are not cleaned up automatically. Delete them manually when you want a tidy source note.
+* Normal tasks: it removes the task from the planner. The line stays in your source note, greyed out, as a record of completion. You can also set progress, see below.
+* Recurring tasks: reschedules the task, as described in the section on recurring tasks.
 
 Clicking anywhere else on the card opens the source note. The default action opens it in a **side panel** alongside your current view. To open the source note as a new tab, use `Ctrl-click`, `Cmd-click` or `middle-click`.
 
@@ -181,6 +182,31 @@ TOREAD Hofstadter essay @sat
 ```
 
 Recognised tokens are `@today`, `@tomorrow`, `@mon` through `@sun`, and any ISO date in the form `@YYYY-MM-DD`. Unrecognised tokens stay in the text and do not schedule the task.
+
+### Recurring tasks
+
+Add a ~ token to a task line to make it repeat: `~Nd` for every N days, or `~Nw` for every N weeks. Only days and weeks are supported. `~1w` is equivalent to `~7d`.
+
+For example:
+
+```
+TODO water the plants ~3d
+CHECK review backups ~1w #ops
+```
+
+A `↻` mark appears in the task’s kind chip. Hover over it to see the frequency. Until you complete it, a recurring task behaves like any normal task: it appears on its scheduled day, becomes overdue when late, and can be dragged and filtered.
+
+![](images/recurring_task.svg)
+
+**Completing (✓) reschedules instead of marking done**: The next due date is calculated from the current due date plus the interval. The card moves to that new date, and the note line is left unchanged so the task keeps recurring.
+
+**Overdue tasks skip missed dates**: If you press ✓ on an overdue recurring task, it jumps to the next occurrence in the future using the same frequency. It never lands in the past, and there is always only one card.
+
+For example, suppose you have a ~1w task due on May 1, and you complete it on May 23. The task advances through May 8, May 15, and May 22, then lands on the next future date: May 29.
+
+Dragging a recurring task sets the date directly. This reschedules the task and resets its future recurrence from the new date. Dragging it to the backlog unschedules it while keeping it recurring.
+
+**To stop recurrence or mark the task permanently done**: remove the `~` token from the note line. The task then becomes an ordinary one-off task. After that, you can press `✓` to mark it DONE, greyed out like any normal completed task.
 
 ### Quick capture
 
