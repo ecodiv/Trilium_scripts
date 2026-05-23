@@ -286,9 +286,11 @@ The weekly planner uses the `#plannerdata` note to store which tasks are schedul
 
 You do not normally need to edit this note's content. To change a setting, edit the **attributes (labels)** of the `#plannerdata` note. After changing a label, refresh the planner with `Shift + Ctrl + R`, the `⟳` button, or a page reload.
 
-### Available settings
+### Behaviour & scan settings
 
-All settings are labels you add to the `#plannerdata` note. They all share the `wp_` prefix to keep them grouped in the attributes pane.
+All settings are labels you add to the `#plannerdata` note. They all share the `wp_` prefix to keep them grouped in the attributes pane. These optional labels go on the #plannerdata note and let you tune scanning and tag appearance without touching the code. Each is a Trilium label: add it to #plannerdata (note actions → add label) in the form name=value. All are optional — leave a label off and the planner uses its default. Changes take effect on the next load or rescan.
+
+The first label controls what gets scanned: `#wp_scan_archived` decides whether archived notes are included. Note that which subtrees are scanned is set separately, through the ⚙ scope panel in the planner header, not via a label. `#wp_backlog_width` sets the layout default for the Backlog column. The remaining `#wp_*` labels recolour the kind chips (the small `TODO / IDEA / CHECK / TOREAD / DEFER` tags on each card).
 
 | Setting | Description |
 | --- | --- |
@@ -299,16 +301,31 @@ All settings are labels you add to the `#plannerdata` note. They all share the `
 | `#wp_check=<colour>` | Overrides the `CHECK` chip colour. Default: green. |
 | `#wp_toread=<colour>` | Overrides the `TOREAD` chip colour. Default: purple. |
 | `#wp_defer=<colour>` | Overrides the `DEFER` chip colour. Default: teal. |
-| `#wp_bg_task=<colour>` | Background colour of task cards. Default: `#f3f3f3`. |
-| `#wp_bg_panel=<colour>` | Background colour of the day and Backlog columns. Default: `#fafafa`. |
-| `#wp_color_done_text=<colour>` | Colour applied to the grey-out span around finished `DONE` lines in source notes. Default: `#cfcfcf`. |
-| `#wp_color_done_btn=<colour>` | Colour of the green `✓` mark-done button on cards. Default: `#79a574`. |
-| `#wp_color_date_tag=<colour>` | Colour of the inline `@date` token shown on cards. Default: `#a8a8a8`. |
-|`#wp_color_progress=<colour>` | Color of the progress bar. Default: `#79a574` |
 
 The user can also set the Backlog width interactively by dragging the right edge of the Backlog column. The dragged value is saved into the `#plannerdata` JSON and takes precedence over `#wp_backlog_width` until the saved value is cleared.
 
 If something goes wrong and the JSON content becomes corrupted, the [Recovery](#recovery) section explains how to edit or reset it safely.
+
+### Theme colours
+
+The planner now follows your active Trilium theme. Switch Trilium to a dark theme and the planner's surfaces, text, and borders adapt automatically. 
+
+Set any color label to force a custom color (any CSS color string). The values shown below are the light-theme fallback, used only when the corresponding Trilium variable is unavailable.
+
+| Setting | Description |
+| --- | --- |
+| `#wp_bg_root=<colour>` | Background of the root area, header, buttons, inputs, and dialogs. Follows `--main-background-color`. Fallback: `#fff`. |
+| `#wp_bg_panel=<colour>` | Background of the day and Backlog columns. Follows `--accented-background-color`. Fallback: `#fafafa`. |
+| `#wp_bg_task=<colour>` | Background colour of task cards. Follows `--more-accented-background-color`. Fallback: `#f3f3f3`. |
+| `#wp_bg_hover=<colour>` | Background of buttons and rows on hover. Follows `--hover-item-background-color`. Fallback: `#eee`. |
+| `#wp_color_text=<colour>` | Primary text colour. Follows `--main-text-color`. Fallback: `#333`. |
+| `#wp_color_muted=<colour>` | Colour of labels, subtitles, column counts, and muted buttons. Follows `--muted-text-color`. Fallback: `#666`. |
+| `#wp_border=<colour>` | Colour of borders and separators. Follows `--main-border-color`. Fallback: `#d0d0d0`. |
+| `#wp_color_done_btn=<colour>` | Colour of the `✓` mark-done button on cards. Fixed colour (not theme-following). Default: `#79a574`. |
+| `#wp_color_date_tag=<colour>` | Colour of the inline `@date` token shown on cards. Follows `--muted-text-color`. Fallback: `#a8a8a8`. |
+| `#wp_color_progress=<colour>` | Colour of the progress-bar fill on cards. Fixed colour (not theme-following). Default: `#79a574`. |
+| `#wp_color_done_text=<colour>` | Colour of the grey-out span written around finished `DONE` lines in source notes. Fixed colour (stored in note content, so it can't follow the theme). Default: `#cfcfcf`. |
+
 
 ### Data safety
 

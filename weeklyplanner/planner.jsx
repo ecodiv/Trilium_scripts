@@ -60,9 +60,17 @@
  *          #wp_check=#42ae2e         override CHECK chip color
  *          #wp_toread=#9d4edd        override TOREAD chip color
  *          #wp_defer=#008080         override DEFER chip color
- *        Theme (any CSS color string):
- *          #wp_bg_task=#f3f3f3          task card background
+ *        Theme: the planner follows the active Trilium theme (light / dark /
+ *        custom) automatically — the neutral surfaces, text, and borders below
+ *        inherit Trilium's CSS variables. Set any label to force a custom color
+ *        (any CSS color string); the shown values are the light-theme fallback.
+ *          #wp_bg_root=#fff             root / header / buttons / dialogs
  *          #wp_bg_panel=#fafafa         column / panel background
+ *          #wp_bg_task=#f3f3f3          task card background
+ *          #wp_bg_hover=#eee            button / row hover
+ *          #wp_color_text=#333          primary text
+ *          #wp_color_muted=#666         labels, subtitles, muted buttons
+ *          #wp_border=#d0d0d0           borders / separators
  *          #wp_color_done_text=#cfcfcf  grey of marked-done lines in source
  *          #wp_color_done_btn=#79a574   mark-done ✓ button color
  *          #wp_color_date_tag=#a8a8a8   inline @date token color
@@ -92,15 +100,27 @@ function getKindColor(kind, overrides) {
     return KINDS[kind]?.color || '#666';
 }
 
-/* Theme defaults — each can be overridden per install via a label on the
-   #plannerdata note. The label names use the wp_ prefix (e.g. #wp_bg_task). */
+/* Theme tokens. Neutral surface/text/border tokens default to the active
+   Trilium theme's CSS variables, so the planner follows Trilium's light, dark,
+   or custom theme automatically. Each has a light-value fallback (used if the
+   variable is absent) and can still be overridden per install by a #wp_* label
+   on the #plannerdata note (see themeLabelMap in loadPlannerData).
+   Accent tokens are fixed colours — they read fine on both light and dark. */
 const THEME_DEFAULTS = {
-    bgTask:         '#f3f3f3',  // task card background
-    bgPanel:        '#fafafa',  // column / panel background
-    colorDoneText:  '#cfcfcf',  // grey of marked-done lines in source
-    colorDoneBtn:   '#79a574',  // mark-done button color
-    colorDateTag:   '#a8a8a8',  // inline @date token color
-    colorProgress:  '#79a574',  // progress-bar fill (matches done button by default)
+    bgRoot:     'var(--main-background-color, #fff)',           // root, header, buttons, inputs, dialogs
+    bgPanel:    'var(--accented-background-color, #fafafa)',    // columns / panels
+    bgTask:     'var(--more-accented-background-color, #f3f3f3)', // task cards
+    bgHover:    'var(--hover-item-background-color, #eee)',     // button / row hover
+    bgActive:   'var(--active-item-background-color, #444)',    // selected toggle segment
+    textActive: 'var(--active-item-text-color, #fff)',         // text on selected segment
+    text:       'var(--main-text-color, #333)',                // primary text
+    textMuted:  'var(--muted-text-color, #666)',               // labels, subtitles, muted buttons
+    border:     'var(--main-border-color, #d0d0d0)',           // borders / separators
+
+    colorDoneText:  '#cfcfcf',                          // grey written into source notes (must stay literal)
+    colorDoneBtn:   '#79a574',                          // mark-done button color
+    colorDateTag:   'var(--muted-text-color, #a8a8a8)', // inline @date token color
+    colorProgress:  '#79a574',                          // progress-bar fill
 };
 
 function resolveTheme(overrides) {
@@ -230,8 +250,13 @@ async function loadPlannerData() {
 
         // Theme overrides — any CSS color string per #wp_* label (see header).
         const themeLabelMap = {
-            bgTask:         'wp_bg_task',
+            bgRoot:         'wp_bg_root',
             bgPanel:        'wp_bg_panel',
+            bgTask:         'wp_bg_task',
+            bgHover:        'wp_bg_hover',
+            text:           'wp_color_text',
+            textMuted:      'wp_color_muted',
+            border:         'wp_border',
             colorDoneText:  'wp_color_done_text',
             colorDoneBtn:   'wp_color_done_btn',
             colorDateTag:   'wp_color_date_tag',
@@ -794,46 +819,46 @@ function buildStyle(theme) {
     return `
 .pl-root { display:flex; flex-direction:column; height:100%; overflow:hidden;
            font-family: var(--detail-font-family,"Segoe UI",sans-serif);
-           font-size:14px; color:#333; background:#fff; }
+           font-size:14px; color:${theme.text}; background:${theme.bgRoot}; }
 
 .pl-header { display:flex; align-items:center; gap:7px; padding:10px 16px;
-             flex-shrink:0; border-bottom:1px solid #d0d0d0;
-             flex-wrap:wrap; background:#fff; }
+             flex-shrink:0; border-bottom:1px solid ${theme.border};
+             flex-wrap:wrap; background:${theme.bgRoot}; }
 
 .pl-board { display:flex; gap:10px; overflow-x:auto;
             padding:0 16px 20px; flex:1; align-items:flex-start;
             -webkit-overflow-scrolling:touch; }
 
 .pl-col { flex-shrink:0; display:flex; flex-direction:column; border-radius:8px;
-          border:1px solid #d0d0d0;
+          border:1px solid ${theme.border};
           background:${theme.bgPanel};
           max-height:calc(100vh - 240px); position:relative; }
 .pl-col.today { border-color:#89b4fa; border-width:2px; }
 
-.pl-col-head { padding:10px 12px 8px; border-bottom:1px solid #d8d8d8;
+.pl-col-head { padding:10px 12px 8px; border-bottom:1px solid ${theme.border};
                flex-shrink:0; }
 .pl-col-label { font-size:14px; font-weight:700; text-transform:uppercase;
-                letter-spacing:.08em; color:#666; }
+                letter-spacing:.08em; color:${theme.textMuted}; }
 .pl-col.today .pl-col-label { color:#5a7fb8; }
-.pl-col-sub { font-size:13px; color:#888; margin-top:2px; }
+.pl-col-sub { font-size:13px; color:${theme.textMuted}; margin-top:2px; }
 
 .pl-tasks { padding:8px; display:flex; flex-direction:column; gap:6px;
             overflow-y:auto; flex:1; min-height:64px; }
 .pl-task { background:${theme.bgTask}; border-radius:5px;
            padding:7px 10px; font-size:15px; line-height:1.4; cursor:pointer;
            border:1.5px solid transparent; transition:border-color .1s, opacity .15s;
-           user-select:none; color:#222; }
-.pl-task:hover { border-color:#a8a8a8; }
+           user-select:none; color:${theme.text}; }
+.pl-task:hover { border-color:${theme.border}; }
 .pl-task.dragging { opacity:.35; cursor:grabbing; }
 .pl-task[draggable="true"] { cursor:grab; }
-.pl-task-note { font-size:12px; color:#888; margin-top:3px;
+.pl-task-note { font-size:12px; color:${theme.textMuted}; margin-top:3px;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pl-task-kind { display:inline-block; font-size:10px; font-weight:700;
                 padding:1px 5px; border-radius:3px; margin-right:5px;
                 vertical-align:middle; letter-spacing:.05em; color:#fff; }
 .pl-task-date { color:${theme.colorDateTag}; }
 
-.pl-drop { display:none; height:40px; border:2px dashed #b8b8b8;
+.pl-drop { display:none; height:40px; border:2px dashed ${theme.border};
            border-radius:5px; opacity:.5; }
 .pl-tasks.drag-over { background:rgba(137,180,250,.10); }
 .pl-tasks.drag-over .pl-drop { display:block; }
@@ -849,19 +874,19 @@ function buildStyle(theme) {
 body.pl-resizing { cursor:col-resize !important; user-select:none; }
 body.pl-resizing * { cursor:col-resize !important; }
 
-.pl-btn { background:#fff; border:1px solid #c8c8c8; border-radius:5px;
-          color:#333; font-size:14px; padding:3px 10px;
+.pl-btn { background:${theme.bgRoot}; border:1px solid ${theme.border}; border-radius:5px;
+          color:${theme.text}; font-size:14px; padding:3px 10px;
           cursor:pointer; line-height:1.4; }
-.pl-btn:hover { background:#eee; }
+.pl-btn:hover { background:${theme.bgHover}; }
 .pl-btn.icon { font-size:19px; width:28px; height:26px; padding:0; }
-.pl-btn.muted { color:#666; }
+.pl-btn.muted { color:${theme.textMuted}; }
 .pl-btn:disabled { opacity:.5; cursor:not-allowed; }
 
 .pl-capture { display:flex; gap:6px; padding:8px 16px; flex-shrink:0;
-              border-bottom:1px solid #d8d8d8; background:#fff; }
-.pl-capture input { flex:1; background:#fff;
-                    border:1px solid #c8c8c8; border-radius:5px;
-                    color:#333; font-size:14px; padding:6px 10px;
+              border-bottom:1px solid ${theme.border}; background:${theme.bgRoot}; }
+.pl-capture input { flex:1; background:${theme.bgRoot};
+                    border:1px solid ${theme.border}; border-radius:5px;
+                    color:${theme.text}; font-size:14px; padding:6px 10px;
                     font-family:inherit; }
 .pl-capture input:focus { outline:1px solid #89b4fa; }
 
@@ -870,13 +895,13 @@ body.pl-resizing * { cursor:col-resize !important; }
    Position is set at open time from the trigger button's bounding rect. */
 .pl-filter-wrap { position:relative; }
 .pl-filter-panel { position:fixed; z-index:9998;
-                   background:#fff; border:1px solid #c8c8c8; border-radius:6px;
+                   background:${theme.bgRoot}; border:1px solid ${theme.border}; border-radius:6px;
                    box-shadow:0 4px 12px rgba(0,0,0,.12);
                    padding:10px 12px; min-width:200px; max-width:240px;
                    max-height:80vh; overflow-y:auto; }
 .pl-filter-panel h5 { margin:0 0 4px; font-size:12px;
                       text-transform:uppercase; letter-spacing:.05em;
-                      color:#666; font-weight:700; }
+                      color:${theme.textMuted}; font-weight:700; }
 .pl-filter-panel h5:not(:first-child) { margin-top:10px; }
 .pl-filter-row { display:flex; align-items:center; gap:6px;
                  padding:3px 0; cursor:pointer; user-select:none;
@@ -892,8 +917,8 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-task-done-btn {
     position:absolute; top:5px; right:5px;
     width:18px; height:18px;
-    border:1.5px solid #999; border-radius:50%;
-    background:#fff; color:#79a574;
+    border:1.5px solid ${theme.border}; border-radius:50%;
+    background:${theme.bgRoot}; color:${theme.colorDoneBtn};
     font-size:12px; font-weight:700; line-height:1;
     display:flex; align-items:center; justify-content:center;
     cursor:pointer; opacity:0;
@@ -903,7 +928,7 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-task-done-btn:hover {
     background:${theme.colorDoneBtn}; border-color:${theme.colorDoneBtn}; color:#fff;
 }
-.pl-task-done-btn.working { opacity:1; background:#eee; cursor:wait; }
+.pl-task-done-btn.working { opacity:1; background:${theme.bgHover}; cursor:wait; }
 /* Always visible on touch devices (no hover) */
 @media (hover: none) {
     .pl-task-done-btn { opacity:.7; }
@@ -915,7 +940,7 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-task-progress {
     position:absolute; left:0; right:0; bottom:0;
     height:5px; border-radius:0 0 5px 5px;
-    background:rgba(0,0,0,.06);
+    background:rgba(128,128,128,.18);
     cursor:pointer; overflow:hidden;
 }
 .pl-task-progress-fill {
@@ -927,8 +952,8 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-task-progress:hover .pl-task-progress-fill { opacity:.85; }
 .pl-task-progress-label {
     position:absolute; right:6px; top:-15px;
-    font-size:10px; color:#666;
-    background:#fff; padding:0 4px; border-radius:3px;
+    font-size:10px; color:${theme.textMuted};
+    background:${theme.bgRoot}; padding:0 4px; border-radius:3px;
     pointer-events:none; opacity:0;
     transition:opacity .15s;
 }
@@ -939,8 +964,8 @@ body.pl-resizing * { cursor:col-resize !important; }
 /* Config panel — scope (include/exclude subtrees) */
 .pl-config-panel {
     padding:12px 16px;
-    background:#f5f5f5;
-    border-bottom:1px solid #d0d0d0;
+    background:${theme.bgPanel};
+    border-bottom:1px solid ${theme.border};
     flex-shrink:0;
 }
 .pl-config-row {
@@ -949,28 +974,28 @@ body.pl-resizing * { cursor:col-resize !important; }
 }
 .pl-config-label {
     font-size:11px; font-weight:600; text-transform:uppercase;
-    color:#888; letter-spacing:0.05em;
+    color:${theme.textMuted}; letter-spacing:0.05em;
 }
 .pl-mode-toggle {
-    display:inline-flex; border:1px solid #c8c8c8;
+    display:inline-flex; border:1px solid ${theme.border};
     border-radius:4px; overflow:hidden;
 }
 .pl-mode-btn {
     padding:4px 12px; font-size:12px; cursor:pointer;
-    background:transparent; border:none; color:#666;
+    background:transparent; border:none; color:${theme.textMuted};
 }
 .pl-mode-btn.active {
-    background:#444; color:#fff; font-weight:600;
+    background:${theme.bgActive}; color:${theme.textActive}; font-weight:600;
 }
 .pl-dropzone {
-    border:2px dashed #c8c8c8;
+    border:2px dashed ${theme.border};
     border-radius:6px; padding:12px;
-    text-align:center; font-size:12px; color:#888;
+    text-align:center; font-size:12px; color:${theme.textMuted};
     transition:background .15s, border-color .15s;
 }
 .pl-dropzone.over {
     background:rgba(137,180,250,0.10);
-    border-color:#89b4fa; color:#333;
+    border-color:#89b4fa; color:${theme.text};
 }
 .pl-chips {
     display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;
@@ -978,7 +1003,7 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-chip {
     display:inline-flex; align-items:center; gap:6px;
     padding:3px 6px 3px 10px;
-    background:#fff; border:1px solid #d0d0d0;
+    background:${theme.bgRoot}; border:1px solid ${theme.border};
     border-radius:12px; font-size:12px;
 }
 .pl-chip-title {
@@ -987,11 +1012,11 @@ body.pl-resizing * { cursor:col-resize !important; }
 }
 .pl-chip-x {
     cursor:pointer; padding:0 4px; border-radius:50%;
-    color:#888; font-weight:700;
+    color:${theme.textMuted}; font-weight:700;
 }
 .pl-chip-x:hover { color:#d97070; background:rgba(217,112,112,0.1); }
 .pl-config-hint {
-    font-size:11px; color:#888; font-style:italic; margin-top:6px;
+    font-size:11px; color:${theme.textMuted}; font-style:italic; margin-top:6px;
 }
 .pl-badge {
     display:inline-block; min-width:16px; height:16px;
@@ -1000,21 +1025,21 @@ body.pl-resizing * { cursor:col-resize !important; }
     background:#89b4fa; color:#fff; margin-left:4px; font-weight:700;
 }
 .pl-btn.active {
-    background:#444; color:#fff; border-color:#444;
+    background:${theme.bgActive}; color:${theme.textActive}; border-color:${theme.bgActive};
 }
 .pl-view-toggle {
     display:inline-flex; align-items:center; gap:0;
-    border:1px solid #c8c8c8; border-radius:5px; overflow:hidden;
-    background:#fff;
+    border:1px solid ${theme.border}; border-radius:5px; overflow:hidden;
+    background:${theme.bgRoot};
 }
 .pl-view-btn {
-    border:none; border-right:1px solid #d8d8d8;
-    background:#fff; color:#666; padding:3px 9px;
+    border:none; border-right:1px solid ${theme.border};
+    background:${theme.bgRoot}; color:${theme.textMuted}; padding:3px 9px;
     font-size:12px; line-height:1.4; cursor:pointer;
 }
 .pl-view-btn:last-child { border-right:none; }
-.pl-view-btn:hover { background:#eee; }
-.pl-view-btn.active { background:#444; color:#fff; font-weight:700; }
+.pl-view-btn:hover { background:${theme.bgHover}; }
+.pl-view-btn.active { background:${theme.bgActive}; color:${theme.textActive}; font-weight:700; }
 .pl-confirm-overlay {
     position:fixed; inset:0; z-index:10000;
     background:rgba(0,0,0,.18);
@@ -1023,12 +1048,12 @@ body.pl-resizing * { cursor:col-resize !important; }
 }
 .pl-confirm-dialog {
     width:min(420px, calc(100vw - 32px));
-    background:#fff; border:1px solid #c8c8c8; border-radius:8px;
+    background:${theme.bgRoot}; border:1px solid ${theme.border}; border-radius:8px;
     box-shadow:0 8px 28px rgba(0,0,0,.20);
-    padding:14px 16px; color:#333;
+    padding:14px 16px; color:${theme.text};
 }
 .pl-confirm-title { font-size:15px; font-weight:700; margin-bottom:6px; }
-.pl-confirm-body { font-size:13px; color:#666; line-height:1.4; margin-bottom:12px; }
+.pl-confirm-body { font-size:13px; color:${theme.textMuted}; line-height:1.4; margin-bottom:12px; }
 .pl-confirm-actions { display:flex; justify-content:flex-end; gap:8px; }
 .pl-btn.danger { border-color:#d97070; color:#9b3434; }
 .pl-btn.danger:hover { background:#fae9e9; }
@@ -1380,7 +1405,7 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
                                     <span style={{ color: getKindColor(k, overrides), fontWeight: 700 }}>
                                         {k}
                                     </span>
-                                    <span style={{ color: '#999', marginLeft: 'auto' }}>
+                                    <span style={{ color: 'var(--muted-text-color, #999)', marginLeft: 'auto' }}>
                                         {kindCounts[k]}
                                     </span>
                                 </label>
@@ -2120,7 +2145,7 @@ function PlannerApp() {
     }, []);
 
     if (loading && allTasks.length === 0) {
-        return <div style={{ padding: '24px', color: '#888' }}>Loading…</div>;
+        return <div style={{ padding: '24px', color: theme.textMuted }}>Loading…</div>;
     }
     if (error) {
         return <div style={{ padding: '24px', color: '#c34' }}>✗ {error}</div>;
@@ -2135,7 +2160,7 @@ function PlannerApp() {
                     onClick={() => moveDateRange(-1)}
                     title={viewMode === VIEW_MODES.DAY ? 'Previous day' : 'Previous week'}
                 >‹</button>
-                <span style={{ fontSize: '16px', color: '#666', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: '16px', color: theme.textMuted, whiteSpace: 'nowrap' }}>
                     {wkLabel}
                 </span>
                 <button
@@ -2163,7 +2188,7 @@ function PlannerApp() {
                 {!isCurrentRange && (
                     <button class="pl-btn muted" onClick={jumpToToday}>today</button>
                 )}
-                <span style={{ fontSize: '14px', color: '#666', marginLeft: 'auto' }}>
+                <span style={{ fontSize: '14px', color: theme.textMuted, marginLeft: 'auto' }}>
                     {planned}/{total} planned
                 </span>
                 <button
