@@ -323,7 +323,7 @@ Over time the planner can accumulate stale entries. This happens whenever a task
 
 To clean them up:
 
-1. click `tidy up` button (little broom). This will tell the planner to scan every note to detect scheduled tasks that do longer exist. 
+1. click `tidy up` button (![](images/tidy_up.svg)). This will tell the planner to scan every note to detect scheduled tasks that do longer exist. 
 2. It then shows you how many leftover entries it found and asks you to confirm before removing anything. 
 3. Confirm toe remove the planner's own scheduling records for tasks that are already gone. Note, your tasks themselves are never touched.
 
