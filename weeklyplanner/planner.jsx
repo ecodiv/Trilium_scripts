@@ -599,6 +599,22 @@ async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT 
     return flattenGroups(groups);
 }
 
+/* For state compaction: the set of note ids we could fully read (non-deleted,
+   non-protected text notes) and the set of all note ids that still exist.
+   Together with a full task scan, these let us prune only TRUE orphans —
+   never tasks in protected/unreadable notes whose absence we can't confirm. */
+async function fetchNoteIdSets() {
+    return await runOnBackend(() => {
+        const readable = api.sql
+            .getRows("SELECT noteId FROM notes WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text'")
+            .map(r => r.noteId);
+        const existing = api.sql
+            .getRows("SELECT noteId FROM notes WHERE isDeleted = 0")
+            .map(r => r.noteId);
+        return { readableNoteIds: readable, existingNoteIds: existing };
+    }, []);
+}
+
 /* Flatten {noteId, title, tasks:[...]} groups */
 function flattenGroups(groups) {
     const all = [];
@@ -838,6 +854,55 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks) {
     return next;
 }
 
+/* Compact #plannerdata: drop entries for TRUE orphans only. Inputs come from a
+   full, scope-ignoring scan:
+     liveIds         — task ids still present anywhere in readable notes
+     readableNoteIds — notes we could fully read (non-protected text notes)
+     existingNoteIds — every note that still exists
+   An id is an orphan iff its source note was deleted, OR the note is readable
+   and the line is gone. Ids whose note exists but is unreadable (protected or
+   non-text) are KEPT, since protected notes are never scanned and pruning them
+   would lose live schedules. Returns { data, removed } (removed = orphan count). */
+function compactPlannerData(plannerData, { liveIds, readableNoteIds, existingNoteIds }) {
+    const live     = liveIds instanceof Set ? liveIds : new Set(liveIds);
+    const readable = readableNoteIds instanceof Set ? readableNoteIds : new Set(readableNoteIds);
+    const existing = existingNoteIds instanceof Set ? existingNoteIds : new Set(existingNoteIds);
+
+    const noteIdOf = (id) => { const i = id.indexOf('::'); return i === -1 ? null : id.slice(0, i); };
+    const isOrphan = (id) => {
+        if (live.has(id)) return false;
+        const n = noteIdOf(id);
+        if (!n) return false;               // malformed key — leave alone
+        if (!existing.has(n)) return true;  // source note deleted
+        if (readable.has(n)) return true;   // note readable, line gone
+        return false;                       // exists but unreadable (protected/non-text) — keep
+    };
+
+    let removed = 0;
+    const next = {};
+    for (const key in plannerData) {
+        if (key.startsWith('_')) { next[key] = plannerData[key]; continue; }
+        if (isOrphan(key)) { removed++; continue; }
+        next[key] = plannerData[key];
+    }
+    if (plannerData._order) {
+        const order = {};
+        for (const date in plannerData._order) {
+            const kept = (plannerData._order[date] || []).filter(id => !isOrphan(id));
+            if (kept.length) order[date] = kept;   // also drops now-empty day arrays
+        }
+        next._order = order;
+    }
+    if (plannerData._progress) {
+        const progress = {};
+        for (const id in plannerData._progress) {
+            if (!isOrphan(id)) progress[id] = plannerData._progress[id];
+        }
+        next._progress = progress;
+    }
+    return { data: next, removed };
+}
+
 /* ── CSS — built from the resolved theme ───────────────────────── */
 
 /* Builds the planner's CSS for a given resolved theme. */
@@ -910,6 +975,8 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-btn.icon { font-size:19px; width:28px; height:26px; padding:0; }
 .pl-btn.muted { color:${theme.textMuted}; }
 .pl-btn:disabled { opacity:.5; cursor:not-allowed; }
+.pl-icon-btn { display:inline-flex; align-items:center; justify-content:center; }
+.pl-icon-btn svg { display:block; }
 
 .pl-capture { display:flex; gap:6px; padding:8px 16px; flex-shrink:0;
               border-bottom:1px solid ${theme.border}; background:${theme.bgRoot}; }
@@ -1610,6 +1677,8 @@ function PlannerApp() {
     const [configLoaded, setConfigLoaded] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
     const [pendingClear, setPendingClear] = useState(null);
+    const [pendingCompact, setPendingCompact] = useState(null);  // { removed, data } | null
+    const [compacting, setCompacting] = useState(false);
     const configSaveDebounceRef = useRef(null);
     const configReloadDebounceRef = useRef(null);
     const skipFirstConfigSaveRef = useRef(true);  // skip the state-from-load save
@@ -2105,6 +2174,37 @@ function PlannerApp() {
         setPendingClear(null);
     }, []);
 
+    /* Compact #plannerdata: full scan of every note (ignoring scope, including
+       archived), then drop entries for tasks that truly no longer exist. Opens
+       a confirm dialog with the count; nothing is written until confirmed. */
+    const requestCompact = useCallback(async () => {
+        setCompacting(true);
+        try {
+            const [liveTasks, sets] = await Promise.all([
+                fetchAllTasks({ scanArchived: true, config: { mode: 'exclude', subtrees: [] }, systemNoteIds }),
+                fetchNoteIdSets(),
+            ]);
+            const { data, removed } = compactPlannerData(plannerData, {
+                liveIds: new Set(liveTasks.map(t => t.id)),
+                readableNoteIds: sets.readableNoteIds,
+                existingNoteIds: sets.existingNoteIds,
+            });
+            setPendingCompact({ removed, data });
+        } catch (err) {
+            console.error('compact:', err);
+            alert(`Compact failed: ${err.message || err}`);
+        } finally {
+            setCompacting(false);
+        }
+    }, [plannerData, systemNoteIds]);
+
+    const confirmCompact = useCallback(() => {
+        if (pendingCompact && pendingCompact.data) setPlannerData(pendingCompact.data);
+        setPendingCompact(null);
+    }, [pendingCompact]);
+
+    const cancelCompact = useCallback(() => setPendingCompact(null), []);
+
     /* Derived */
     const mobile = useMobile();
     const weekCols = useMemo(() => getWeekCols(weekOffset), [weekOffset]);
@@ -2228,6 +2328,19 @@ function PlannerApp() {
                         </span>
                     )}
                 </button>
+                <button
+                    class="pl-btn muted pl-icon-btn"
+                    onClick={requestCompact}
+                    disabled={compacting}
+                    title="Tidy up: remove planner entries whose source task no longer exists (your notes and tasks are not touched)"
+                    aria-label="Compact planner state"
+                >
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+                         stroke="currentColor" stroke-width="0.8"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="m 20.621623,2.0298933 -6.901428,6.901423 -0.884242,-0.884249 v -0.0213 l -0.0213,-0.0213 c -0.442115,-0.393937 -1.019032,-0.582649 -1.574381,-0.582649 -0.55535,0 -1.091829,0.207611 -1.5096857,0.625439 l -0.107826,0.08626 -0.345049,0.345089 -0.237212,0.19412 -6.297549,4.8957007 -0.603873,0.49603 7.440596,7.440602 0.4960357,-0.603876 4.87413,-6.254417 0.0213,0.0213 0.690146,-0.690143 h 0.0213 l 0.0213,-0.0213 c 0.787198,-0.886938 0.792591,-2.248348 -0.04313,-3.084072 l -0.948949,-0.9489397 6.901423,-6.901423 z m -9.381621,6.772016 c 0.212997,-0.0057 0.447514,0.06742 0.625437,0.215641 0.0081,0.0057 0.01322,0.01615 0.0213,0.0213 l 2.803703,2.8037017 c 0.258796,0.258796 0.283064,0.808763 0,1.164617 -0.01084,0.01328 -0.01084,0.02953 -0.0213,0.04314 l -0.215693,0.194122 -3.989885,-3.9898847 0.237212,-0.237212 c 0.132099,-0.132096 0.326214,-0.210255 0.539175,-0.215642 z m -1.8331947,1.3371547 4.0977227,4.09772 -4.0545867,5.176064 -0.992082,-0.992079 1.488121,-1.552815 -0.99208,-0.948951 -1.466552,1.531259 -0.905813,-0.905815 2.674304,-2.695869 -0.970513,-0.970518 -2.695872,2.674309 -1.358715,-1.35872 z" />
+                    </svg>
+                </button>
                 <FilterDropdown
                     allTasks={allTasks}
                     filters={filters}
@@ -2255,8 +2368,44 @@ function PlannerApp() {
                 </div>
             )}
 
+            {pendingCompact && (
+                <div
+                    class="pl-confirm-overlay"
+                    onClick={cancelCompact}
+                    onMouseDown={(e) => e.stopPropagation()}
+                >
+                    <div class="pl-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+                        {pendingCompact.removed > 0 ? (
+                            <>
+                                <div class="pl-confirm-title">
+                                    Remove {pendingCompact.removed} orphaned {pendingCompact.removed === 1 ? 'entry' : 'entries'}?
+                                </div>
+                                <div class="pl-confirm-body">
+                                    These are planner entries whose source task no longer exists (line deleted or edited). Tasks in protected or unreadable notes are kept. Source notes are not changed.
+                                </div>
+                                <div class="pl-confirm-actions">
+                                    <button class="pl-btn muted" onClick={cancelCompact}>Cancel</button>
+                                    <button class="pl-btn danger" onClick={confirmCompact}>Remove</button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div class="pl-confirm-title">Nothing to compact</div>
+                                <div class="pl-confirm-body">No orphaned entries were found.</div>
+                                <div class="pl-confirm-actions">
+                                    <button class="pl-btn muted" onClick={cancelCompact}>Close</button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {showConfig && (
-                <ConfigPanel config={config} onChange={setConfig} />
+                <ConfigPanel
+                    config={config}
+                    onChange={setConfig}
+                />
             )}
 
             <CapturePanel onCapture={capture} working={capturing} />
