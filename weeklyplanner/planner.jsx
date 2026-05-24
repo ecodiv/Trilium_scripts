@@ -1,88 +1,36 @@
 /**
- * ╔══════════════════════════════════════════════════════════════╗
- * ║          Task Planner — TriliumNext (Preact)                ║
- * ║                                                             ║
- * ║   Backlog │ Mon │ Tue │ Wed │ Thu │ Fri │ Sat │ Sun         ║
- * ╚══════════════════════════════════════════════════════════════╝ 
+ * Task Planner — TriliumNext (Preact)
  *
- * Collects line-prefixed tasks from all text notes:
- *   • TODO   <text>   — actionable task     (orange)
- *   • IDEA   <text>   — captured thought    (blue)
- *   • CHECK  <text>   — to verify / review  (green)
- *   • TOREAD <text>   — reading queue       (purple)
- *   • DEFER <text>   — Follow up later       (teal)
+ * A weekly board (Backlog + day columns) built from line-prefixed tasks found
+ * across all text notes. Recognised prefixes: TODO, IDEA, CHECK, TOREAD, DEFER
+ * (case-sensitive, at the start of a line/block, followed by a space). See the
+ * separate user manual for end-user features (@date, #tag, ~recurrence, etc.).
  *
- * Prefixes are case-sensitive, must be at the start of a line/block,
- * and must be followed by a space. Mark-done wraps the line in
- * `<span style="color:#cfcfcf">DONE …</span>` in the source note,
- * so completed items remain visible but greyed in their source note.
- *
- * INTERACTIONS:
- *   click card             →  open source note in side panel
- *   Ctrl/Cmd-click card    →  open source note in new tab
- *   shift-click / mid-click →  open source note in new tab
- *   ✓ on card (hover)      →  mark done (greys the line in source note)
- *   drag card              →  schedule for a day (desktop)
- *   + new TODO             →  appends a TODO line to today's daily note
- *                             (creating it if it doesn't exist)
- *   @date suffix           →  auto-schedules. accepts: @YYYY-MM-DD, @today,
- *                             @tomorrow, @mon..@sun
- *   #tag suffix            →  filterable. Multiple tags allowed.
- *   Week/Work/Day toggle  →  switch the visible columns: full week (Mon–Sun),
- *                             work week (Mon–Fri), or a single day. The choice
- *                             is remembered in #plannerdata (_viewMode). ‹ › step
- *                             by week (Week/Work) or by day (Day); "today" resets.
- *   ⚙ in header            →  open scope config (include/exclude subtrees).
- *                             Drag notes from the tree to add. Auto-saves and
- *                             rescans. Changes don't clear your schedules.
- *   ⚠ <date> on card       →  task was scheduled to a past date. Drag to a
- *                             future day to reschedule, or × on the badge to
- *                             dismiss (keeps task, clears stored schedule).
- *
- * SETUP:
- *   1. Options → Code Notes → enable "JSX"
- *   2. Create a new code note, language: JSX
- *   3. Paste this code into it
- *   4. In your Render note, set ~renderNote → this JSX note
- *   5. Two child notes are auto-created under this JSX note on first load,
- *      both as JSON code notes (so the rich-text editor can't mangle them):
- *        #plannerdata    — UI state: day assignments, filters, view mode,
- *                          backlog width
- *        #plannerConfig  — scan scope: include/exclude subtrees (set via the
- *                          ⚙ button)
- *      No manual setup needed.
- *      Optional labels (all on the #plannerdata note):
- *        #wp_backlog_width=320       default backlog column width (px)
- *        #wp_scan_archived=false     skip archived notes (default: true)
- *        Kind colors:
- *          #wp_todo=#ed7a2a          override TODO chip color
- *          #wp_idea=#348cbb          override IDEA chip color
- *          #wp_check=#42ae2e         override CHECK chip color
- *          #wp_toread=#9d4edd        override TOREAD chip color
- *          #wp_defer=#008080         override DEFER chip color
- *        Theme: the planner follows the active Trilium theme (light / dark /
- *        custom) automatically — the neutral surfaces, text, and borders below
- *        inherit Trilium's CSS variables. Set any label to force a custom color
- *        (any CSS color string); the shown values are the light-theme fallback.
- *          #wp_bg_root=#fff             root / header / buttons / dialogs
- *          #wp_bg_panel=#fafafa         column / panel background
- *          #wp_bg_task=#f3f3f3          task card background
- *          #wp_bg_hover=#eee            button / row hover
- *          #wp_color_text=#333          primary text
- *          #wp_color_muted=#666         labels, subtitles, muted buttons
- *          #wp_border=#d0d0d0           borders / separators
- *          #wp_color_done_text=#cfcfcf  grey of marked-done lines in source
- *          #wp_color_done_btn=#79a574   mark-done ✓ button color
- *          #wp_color_date_tag=#a8a8a8   inline @date token color
- *          #wp_color_progress=#79a574   progress-bar fill
+ * ARCHITECTURE NOTES FOR MAINTAINERS
+ *   - Runs as a render-note widget; `api` is Trilium's FrontendScriptApi.
+ *   - Two JSON child notes are auto-created under this note on first load:
+ *       #plannerdata    UI state — day assignments, _order, _progress,
+ *                       _filters, _viewMode, _backlogWidth.
+ *       #plannerConfig  scan scope — { mode: 'include'|'exclude', subtrees }.
+ *     They are JSON code notes so the rich-text editor can't mangle them.
+ *   - All DB access goes through runOnBackend; those callbacks are serialised
+ *     and run on the backend, so each must be SELF-CONTAINED (no closure over
+ *     module-scope helpers). This is why some scan logic is intentionally
+ *     duplicated between fetchAllTasks and fetchTasksForNote.
+ *   - Mark-done rewrites the source line to a greyed DONE span; the colour
+ *     (THEME_DEFAULTS.colorDoneText) is written into note content and so must
+ *     stay a literal, never a CSS variable.
+ *   - Task ids are derived from note + kind + slug and are used as #plannerdata
+ *     keys, so they must stay stable across edits (see flattenGroups).
+ *   - Theme follows the active Trilium theme via CSS variables; every neutral
+ *     token can be overridden per-install by a #wp_* label on #plannerdata
+ *     (see THEME_DEFAULTS / loadPlannerData). Accent colours are fixed literals.
  */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "trilium:preact";
 import { runOnBackend, runAsyncOnBackendWithManualTransactionHandling, activateNote } from "trilium:api";
 
-/* ═══════════════════════════════════════════════════════════════
-   CONSTANTS — kinds, colors, dimensions
-══════════════════════════════════════════════════════════════════ */
+/* ── CONSTANTS — kinds, colors, dimensions ─────────────────────── */
 
 const KINDS = {
     TODO:   { label: 'TODO',   color: '#ed7a2a' },
@@ -94,18 +42,37 @@ const KINDS = {
 const KIND_KEYS = Object.keys(KINDS);
 const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
 
-/* Per-kind color overrides from #wp_* labels on #plannerdata (see header). */
-function getKindColor(kind, overrides) {
-    if (overrides && overrides[kind]) return overrides[kind];
-    return KINDS[kind]?.color || '#666';
+/* Whitelist a label-provided CSS color so a #wp_* override can't break out of
+   the CSS value context (no ; { } < > " ' / etc.) and can't smuggle url()/
+   expression() for exfiltration. Anything unrecognised falls back to default.
+   Accepts: hex (3/4/6/8), a bare named color, rgb/hsl(a)(...), var(--x[, #hex]). */
+function safeCssColor(value, fallback) {
+    const s = String(value == null ? '' : value).trim();
+    if (/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s)) return s;
+    if (/^[a-zA-Z]+$/.test(s)) return s;                                  // named color
+    if (/^(?:rgb|rgba|hsl|hsla)\([0-9.,%/\s]+\)$/.test(s)) return s;
+    if (/^var\(\s*--[\w-]+\s*(?:,\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}))?\s*\)$/.test(s)) return s;
+    return fallback;
 }
 
-/* Theme tokens. Neutral surface/text/border tokens default to the active
-   Trilium theme's CSS variables, so the planner follows Trilium's light, dark,
-   or custom theme automatically. Each has a light-value fallback (used if the
-   variable is absent) and can still be overridden per install by a #wp_* label
-   on the #plannerdata note (see themeLabelMap in loadPlannerData).
-   Accent tokens are fixed colours — they read fine on both light and dark. */
+/* Stricter: colors written into source-note HTML attributes must be bare hex,
+   so they can never break out of the style="" attribute. */
+function safeHexColor(value, fallback) {
+    const s = String(value == null ? '' : value).trim();
+    return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s) ? s : fallback;
+}
+
+/* Per-kind color overrides from #wp_* labels on #plannerdata (see header).
+   Kind colors only ever reach Preact style objects, but validate anyway. */
+function getKindColor(kind, overrides) {
+    const fallback = KINDS[kind]?.color || '#666';
+    if (overrides && overrides[kind]) return safeCssColor(overrides[kind], fallback);
+    return fallback;
+}
+
+/* Neutral tokens default to Trilium's theme CSS variables (with a light-value
+   fallback) and can be overridden per-install via #wp_* labels — see
+   themeLabelMap in loadPlannerData. Accent tokens are fixed literals. */
 const THEME_DEFAULTS = {
     bgRoot:     'var(--main-background-color, #fff)',           // root, header, buttons, inputs, dialogs
     bgPanel:    'var(--accented-background-color, #fafafa)',    // columns / panels
@@ -123,26 +90,35 @@ const THEME_DEFAULTS = {
     colorProgress:  '#79a574',                          // progress-bar fill
 };
 
+/* Merge defaults with label overrides, validating each override against the
+   CSS value context. colorDoneText is written into source-note HTML, so it
+   gets the stricter hex-only check; everything else allows any safe CSS color.
+   Unset keys keep their trusted literal default. */
 function resolveTheme(overrides) {
-    return { ...THEME_DEFAULTS, ...(overrides || {}) };
+    const o = overrides || {};
+    const out = {};
+    for (const key in THEME_DEFAULTS) {
+        const fallback = THEME_DEFAULTS[key];
+        if (!(key in o)) { out[key] = fallback; continue; }
+        out[key] = key === 'colorDoneText'
+            ? safeHexColor(o[key], fallback)
+            : safeCssColor(o[key], fallback);
+    }
+    return out;
 }
 
 const BACKLOG_WIDTH_DEFAULT = 260;
 const BACKLOG_WIDTH_MIN     = 150;
 const BACKLOG_WIDTH_MAX     = 600;
 
-/* Whether to scan archived notes by default.
-   Overridden per install by adding label #wp_scan_archived=false on the
-   #plannerdata note. Accepted false-y values: false, no, 0, off. */
+/* Scan archived notes by default; override with #wp_scan_archived on #plannerdata. */
 const SCAN_ARCHIVED_DEFAULT = true;
 
 const WEEKDAY_ALIASES = {
     mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0,
 };
 
-/* ═══════════════════════════════════════════════════════════════
-   PARSING HELPERS — @date suffix and #tag extraction
-══════════════════════════════════════════════════════════════════ */
+/* ── PARSING HELPERS — @date suffix and #tag extraction ────────── */
 
 /* Timezone-safe local-date formatter.
    `d.toISOString()` converts to UTC, which silently shifts the date by ±1
@@ -195,19 +171,9 @@ function parseTaskMeta(rawText) {
     return { isoDate: null, tags };
 }
 
-/* Inline recurrence token: `~<n><unit>`, unit = d | w.
-   Mirrors the single-`@date` rule: bounded by whitespace/line ends, and only
-   the FIRST token on a line is honoured (extras are ignored).
-
-   Returns the interval as a STRING-backed record — { token, n, unit } — rather
-   than a pre-computed day count, so a future calendar-rule grammar
-   (`~weekly:mon`, `~mon`) can be added as a pure parser extension without
-   touching the stored shape. Returns null when no valid token is present, in
-   which case the task is an ordinary one-off.
-
-   v1 units: `d` (days) and `w` (weeks, n×7) only. For a monthly cadence, use
-   weeks (e.g. `~4w`). The interval never contributes a date to the note text,
-   so it cannot contradict the column the card sits in. */
+/* Inline recurrence token `~<n><unit>` (unit d|w), e.g. ~7d, ~2w. Same bounding
+   rule as @date; only the first token on a line counts. Returns { token, n, unit }
+   or null for a one-off. Weeks are n×7 days; for monthly cadence use weeks. */
 function parseInterval(rawText) {
     const m = rawText.match(/(^|\s)~(\d+)([dw])(?=\s|$)/);
     if (!m) return null;
@@ -217,9 +183,7 @@ function parseInterval(rawText) {
     return { token: `${n}${unit}`, n, unit };
 }
 
-/* Advance an ISO date by an interval record from parseInterval.
-   Both units are plain day arithmetic (`w` = n×7 days). Operates in local
-   time and returns a local 'YYYY-MM-DD'. */
+/* Advance an ISO date by an interval (w = n×7 days), in local time. */
 function addIntervalToIso(iso, interval) {
     const [y, mo, d] = iso.split('-').map(Number);
     const date = new Date(y, mo - 1, d);   // local midnight, no UTC shift
@@ -228,19 +192,11 @@ function addIntervalToIso(iso, interval) {
     return toLocalIsoDate(date);
 }
 
-/* Next occurrence for a recurring task on completion.
-
-   Anchors to the task's own cadence grid (its current due date), not to the
-   completion day, so each ✓ advances by exactly one interval. The grid is
-   `dueIso + k·interval`. We return the first slot strictly after today, which
-   means:
-     • On-time / early completion → one step (due + interval).
-     • Overdue → roll forward by the interval, SKIPPING every missed slot, until
-       we reach the next future date on the same grid (no pile-up of misses,
-       and never lands in the past).
-   With no stored due date (an unscheduled recurring task), the completion day
-   establishes the anchor → today + interval.
-   Always advances at least once, so a task can never re-land on today. */
+/* Next due date for a recurring task on completion. Steps along the task's
+   own cadence grid (dueIso + k·interval) to the first slot after today, so an
+   overdue task skips missed slots without piling up and never lands in the
+   past. With no stored due date, the completion day anchors the grid. Always
+   advances at least once. The guard caps a degenerate interval, not normal use. */
 function nextRecurDate(dueIso, interval, todayIso) {
     let next = addIntervalToIso(dueIso || todayIso, interval);
     let guard = 0;
@@ -259,9 +215,7 @@ function recurCadenceLabel(interval) {
         : `Repeats every ${interval.n} ${word}s`;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   BACKEND HELPERS
-══════════════════════════════════════════════════════════════════ */
+/* ── BACKEND HELPERS ───────────────────────────────────────────── */
 
 async function loadPlannerData() {
     return await runOnBackend((defaultScanArchived) => {
@@ -277,7 +231,7 @@ async function loadPlannerData() {
         }
 
         const labelStr = (name) => {
-            const v = note.getLabelValue && note.getLabelValue(name);
+            const v = note.getLabelValue(name);
             return (v != null && String(v).trim()) ? String(v).trim() : null;
         };
 
@@ -379,11 +333,9 @@ async function ensurePlannerNote(parentNoteId) {
     );
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   CONFIG NOTE — scan scope only (#plannerConfig), JSON body:
-     { mode: 'exclude'|'include', subtrees: [{noteId, title}, ...] }
-   UI preferences (view mode, filters, …) live in #plannerdata, not here.
-══════════════════════════════════════════════════════════════════ */
+/* ── CONFIG NOTE — scan scope only (#plannerConfig), JSON body: ────────
+   { mode: 'exclude'|'include', subtrees: [{noteId, title}, ...] }
+   UI preferences (view mode, filters, …) live in #plannerdata, not here. */
 
 const PLANNER_CONFIG_LABEL = 'plannerConfig';
 const DEFAULT_PLANNER_CONFIG = { mode: 'exclude', subtrees: [] };
@@ -570,12 +522,11 @@ async function fetchAllTasks({
             ? `n.noteId NOT IN (${sqlList(sysNoteIds)})`
             : '1=1';
 
-        /* Select all text notes in scope, then read content in JS. We don't
-           prefilter on content via SQL GLOB: synced blob rows on server builds
-           are stored in a form GLOB can't see through, so it matched nothing.
-           api.getNote().getContent() decodes transparently and works anywhere.
-           Cost: every in-scope text note is loaded — subsecond even for large
-           bases; #plannerConfig scoping is how users keep big bases fast. */
+        /* Select in-scope text notes, then read content in JS. We don't
+           content-prefilter via SQL GLOB: synced blob rows on server builds
+           aren't visible to GLOB, whereas getContent() decodes everywhere.
+           Cost is loading every in-scope note — subsecond even on large bases;
+           #plannerConfig scoping is how users keep big bases fast. */
         const rows = api.sql.getRows(
             "SELECT noteId, title FROM notes n " +
             "WHERE isDeleted = 0 AND isProtected = 0 AND type = 'text' " +
@@ -588,7 +539,7 @@ async function fetchAllTasks({
         for (const row of rows) {
             const note = api.getNote(row.noteId);
             if (!note) continue;
-            if (!includeArchived && note.hasLabel && note.hasLabel('archived')) continue;
+            if (!includeArchived && note.hasLabel('archived')) continue;
             const content = note.getContent();
             if (!content) continue;
             const tasks = scanContent(content);
@@ -626,7 +577,7 @@ async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT 
         const note = api.getNote(targetNoteId);
         if (!note) return [];
         if (note.isDeleted || note.isProtected || note.type !== 'text') return [];
-        if (!includeArchived && note.hasLabel && note.hasLabel('archived')) return [];
+        if (!includeArchived && note.hasLabel('archived')) return [];
         const content = note.getContent();
         if (!content) return [];
 
@@ -655,14 +606,11 @@ function flattenGroups(groups) {
         for (const t of g.tasks) {
             const meta = parseTaskMeta(t.text);
             const interval = parseInterval(t.text);   // null = ordinary one-off
-            // The id is the #plannerdata key, so it must stay STABLE across edits
-            // to the recurrence cadence. The interval token is metadata, not
-            // content — editing ~2d→~1w (the spec's way to change/stop a cadence)
-            // must not re-key the task, which would orphan its date, _order and
-            // _progress and leave a stale entry behind. So slug from the line with
-            // the interval token stripped. (@date is left in for backward compat;
-            // it has the same latent issue but stripping it would re-key existing
-            // scheduled one-off tasks.)
+            // id is the #plannerdata key, so it must stay stable across edits.
+            // The interval token is stripped from the slug so changing a cadence
+            // (~2d→~1w) doesn't re-key the task and orphan its date/_order/_progress.
+            // @date is left in for backward compat (stripping it would re-key
+            // existing scheduled one-offs).
             const idText = t.text
                 .replace(/(^|\s)~\d+[dw](?=\s|$)/g, ' ')
                 .trim()
@@ -710,6 +658,18 @@ async function markTaskDone(task, doneTextColor) {
     }, [task.noteId, task.kind, task.indexForKind, doneTextColor]);
 }
 
+/* Escape text destined for note HTML so typed markup (e.g. "a < b", an <img>
+   tag) is stored as literal text, not interpreted. cleanText decodes these
+   entities back when the task is later scanned, so display is unaffected. */
+function escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 /* Append a new task to today's daily note.
    If the typed text starts with a known kind followed by a space, use that
    kind verbatim. Otherwise default to TODO. */
@@ -718,7 +678,7 @@ async function appendTodoToToday(text) {
     const m = text.match(prefixRe);
     const kind = m ? m[1] : 'TODO';
     const body = m ? m[2] : text;
-    const lineText = `${kind} ${body}`;
+    const lineText = escapeHtml(`${kind} ${body}`);
 
     return await runOnBackend((line) => {
         const note = api.getTodayNote();
@@ -729,9 +689,7 @@ async function appendTodoToToday(text) {
     }, [lineText]);
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   DATE HELPERS
-══════════════════════════════════════════════════════════════════ */
+/* ── DATE HELPERS ──────────────────────────────────────────────── */
 
 function todayBase() {
     const d = new Date();
@@ -807,9 +765,7 @@ function formatOverdueDate(iso) {
     return yr === thisYear ? `${day} ${mon}` : `${day} ${mon} '${String(yr).slice(2)}`;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   ORDER + FILTER HELPERS
-══════════════════════════════════════════════════════════════════ */
+/* ── ORDER + FILTER HELPERS ────────────────────────────────────── */
 
 function applyFilters(tasks, filters) {
     const { kinds, tags, tagMode } = filters;
@@ -835,15 +791,9 @@ function applyFilters(tasks, filters) {
     });
 }
 
-/* Backlog = tasks the user hasn't planned for a specific day, PLUS tasks
-   scheduled to a date strictly before `todayIso` (past-due). The latter
-   carry `isOverdue: true` so the card renders with a visual marker.
-
-   This makes overdue tasks reachable from any week — including future weeks
-   — so the user can drag them onto a new day instead of having to navigate
-   back to find them. The JSON state is not mutated; the original scheduled
-   date is preserved (the task still also appears in its original day
-   column if that week is being viewed). */
+/* Backlog = unscheduled tasks, plus past-due ones (scheduled before today),
+   which are tagged isOverdue so they show a marker and stay reachable from any
+   week for rescheduling. State is not mutated; the original date is preserved. */
 function getBacklog(allTasks, plannerData, todayIso) {
     const result = [];
     for (const t of allTasks) {
@@ -851,8 +801,7 @@ function getBacklog(allTasks, plannerData, todayIso) {
         if (!scheduled) {
             result.push(t);
         } else if (todayIso && scheduled < todayIso) {
-            // ISO date strings (YYYY-MM-DD) sort lexicographically the same
-            // as chronologically, so a plain string compare is correct.
+            // ISO date strings sort lexicographically == chronologically.
             result.push({ ...t, isOverdue: true, overdueDate: scheduled });
         }
     }
@@ -889,9 +838,7 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks) {
     return next;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   CSS — light theme, kind colors
-══════════════════════════════════════════════════════════════════ */
+/* ── CSS — built from the resolved theme ───────────────────────── */
 
 /* Builds the planner's CSS for a given resolved theme. */
 function buildStyle(theme) {
@@ -936,9 +883,8 @@ function buildStyle(theme) {
                 padding:1px 5px; border-radius:3px; margin-right:5px;
                 vertical-align:middle; letter-spacing:.05em; color:#fff; }
 .pl-task-date { color:${theme.colorDateTag}; }
-/* Recurring marker, rendered INSIDE the kind chip so it stands out on the
-   coloured pill. Static (never animated): an animated spinner would read as
-   "loading" and collide with the done-button's .working state. */
+/* Recurring marker inside the kind chip. Kept static — an animated spinner
+   would read as "loading" and clash with the done button's .working state. */
 .pl-recur-mark { margin-left:4px; font-weight:400; opacity:.95; cursor:default; }
 
 .pl-drop { display:none; height:40px; border:2px dashed ${theme.border};
@@ -973,9 +919,8 @@ body.pl-resizing * { cursor:col-resize !important; }
                     font-family:inherit; }
 .pl-capture input:focus { outline:1px solid #89b4fa; }
 
-/* Filter dropdown. Uses position:fixed so it escapes any clipping ancestor
-   (the planner root has overflow:hidden, which would otherwise crop it).
-   Position is set at open time from the trigger button's bounding rect. */
+/* Filter dropdown uses position:fixed to escape the root's overflow:hidden;
+   its position is computed from the trigger's rect at open time. */
 .pl-filter-wrap { position:relative; }
 .pl-filter-panel { position:fixed; z-index:9998;
                    background:${theme.bgRoot}; border:1px solid ${theme.border}; border-radius:6px;
@@ -994,6 +939,10 @@ body.pl-resizing * { cursor:col-resize !important; }
                    padding:0 4px; border-radius:8px; font-size:10px;
                    line-height:16px; text-align:center; background:#89b4fa;
                    color:#fff; margin-left:4px; font-weight:700; }
+.pl-tagmode-btn { margin-left:auto; padding:1px 6px; font-size:10px; font-weight:700;
+                  border:1px solid ${theme.border}; background:${theme.bgRoot};
+                  color:${theme.textMuted}; border-radius:3px; cursor:pointer;
+                  letter-spacing:.05em; }
 
 /* Done button on each card (shown on hover, always visible on mobile) */
 .pl-task { position:relative; }
@@ -1017,9 +966,7 @@ body.pl-resizing * { cursor:col-resize !important; }
     .pl-task-done-btn { opacity:.7; }
 }
 
-/* Progress bar at the bottom edge of the task card.
-   Click on the bar cycles 0 → 25 → 50 → 75 → 100 → 0.
-   Reaching 100 calls markDone via the cycle handler. */
+/* Progress bar at the bottom edge of the card. Clicking cycles 0→25→50→75→0. */
 .pl-task-progress {
     position:absolute; left:0; right:0; bottom:0;
     height:5px; border-radius:0 0 5px 5px;
@@ -1141,10 +1088,8 @@ body.pl-resizing * { cursor:col-resize !important; }
 .pl-btn.danger { border-color:#d97070; color:#9b3434; }
 .pl-btn.danger:hover { background:#fae9e9; }
 
-/* Overdue badge — shown on cards in the backlog when a task's scheduled
-   date is in the past. Subtle warning tint, not alarming red.
-   Composed of a text span and a hover-only × that dismisses (clears the
-   stored date so the task becomes a normal unplanned task). */
+/* Overdue badge on backlog cards (scheduled date in the past). Text span plus
+   a hover-only × that clears the stored date, returning the task to unplanned. */
 .pl-overdue-badge {
     display:inline-flex; align-items:center;
     margin-right:6px;
@@ -1178,9 +1123,7 @@ body.pl-resizing * { cursor:col-resize !important; }
 `;
 }
 
-/* Inject the planner CSS into the page <head>. Called when the theme is
-   first known, and again whenever it changes. Replaces the existing
-   <style> tag's content rather than appending a new one. */
+/* Inject/replace the planner's <style> tag in <head>; re-run on theme change. */
 function injectStyle(css) {
     let el = document.getElementById('pl-preact-styles');
     if (!el) {
@@ -1191,9 +1134,7 @@ function injectStyle(css) {
     if (el.textContent !== css) el.textContent = css;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   COMPONENTS
-══════════════════════════════════════════════════════════════════ */
+/* ── COMPONENTS ────────────────────────────────────────────────── */
 
 function KindChip({ kind, overrides, recurring, recurTitle }) {
     const k = KINDS[kind];
@@ -1209,14 +1150,10 @@ function KindChip({ kind, overrides, recurring, recurTitle }) {
     );
 }
 
-/* Render task text inline, with @tokens and #tags styled as light-grey spans.
-   Walks the text once and emits a styled span per match of either pattern.
-   Both use the same .pl-task-date CSS rule so they share the muted look. */
+/* Render task text, styling @date / #tag / ~interval tokens as muted spans. */
 function renderTaskText(text) {
     const parts = [];
-    // Match @word, #word, or ~Nd/~Nw at start-of-text or after whitespace.
-    // \S+ for @date; [A-Za-z][\w-]* for #tag; \d+[dw] for the interval token
-    // (matches the parseInterval rule). All three share the muted .pl-task-date look.
+    // @date, #tag, or ~interval at start-of-text or after whitespace.
     const re = /(^|\s)(@\S+|#[A-Za-z][\w-]*|~\d+[dw](?=\s|$))/g;
     let last = 0;
     let m;
@@ -1514,22 +1451,11 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
                             <h5 style={{ display: 'flex', alignItems: 'center' }}>
                                 <span>Tags</span>
                                 <button
+                                    class="pl-tagmode-btn"
                                     onClick={toggleTagMode}
                                     title={tagMode === 'AND'
                                         ? 'AND: a task must have all selected tags. Click to switch to OR.'
                                         : 'OR: a task must have any selected tag. Click to switch to AND.'}
-                                    style={{
-                                        marginLeft: 'auto',
-                                        padding: '1px 6px',
-                                        fontSize: '10px',
-                                        fontWeight: 700,
-                                        border: '1px solid #d8d8d8',
-                                        background: '#fff',
-                                        color: '#666',
-                                        borderRadius: '3px',
-                                        cursor: 'pointer',
-                                        letterSpacing: '.05em',
-                                    }}
                                 >
                                     {tagMode}
                                 </button>
@@ -1562,9 +1488,7 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
 }
 
 
-/* ═══════════════════════════════════════════════════════════════
-   CONFIG PANEL — scope (include/exclude subtrees)
-══════════════════════════════════════════════════════════════════ */
+/* ── CONFIG PANEL — scope (include/exclude subtrees) ───────────── */
 
 function ConfigPanel({ config, onChange }) {
     const [dragOver, setDragOver] = useState(false);
@@ -1662,9 +1586,7 @@ function ConfigPanel({ config, onChange }) {
 }
 
 
-/* ═══════════════════════════════════════════════════════════════
-   ROOT COMPONENT
-══════════════════════════════════════════════════════════════════ */
+/* ── ROOT COMPONENT ────────────────────────────────────────────── */
 
 function PlannerApp() {
     const [allTasks,    setAllTasks]      = useState([]);
@@ -1720,31 +1642,18 @@ function PlannerApp() {
         return changed ? { ...currentData, ...updates } : currentData;
     }, []);
 
-    /* Initial load. Both #plannerdata (state) and #plannerConfig (scope)
-       are auto-created here on first run as children of this JSX note,
-       so the user never has to set them up manually. Both ensure helpers
-       are idempotent — no-ops on every subsequent load. */
+    /* Initial load. The #plannerdata and #plannerConfig notes are auto-created
+       here on first run (idempotent on every later load). */
     useEffect(() => {
         (async () => {
             try {
-                const parentId = (typeof api !== 'undefined' && api.startNote)
-                    ? api.startNote.noteId
-                    : 'root';
+                const parentId = api.startNote ? api.startNote.noteId : 'root';
                 const ensured = await ensurePlannerNote(parentId);
-                if (ensured && ensured.created) {
-                    console.log('Created #plannerdata note.');
-                }
-                if (ensured && ensured.noteId) setStateNoteId(ensured.noteId);
+                setStateNoteId(ensured.noteId);
                 const ensuredCfg = await ensurePlannerConfig(parentId);
-                if (ensuredCfg && ensuredCfg.created) {
-                    console.log('Created #plannerConfig note.');
-                }
 
-                // Load scope config (scan scope only) and planner state.
-                // The view-mode preference lives in #plannerdata (_viewMode),
-                // alongside the other UI state (_filters, _backlogWidth).
                 const { config: loadedCfg, configNoteId: cfgId } = await loadPlannerConfig();
-                setConfigNoteId(cfgId || (ensuredCfg && ensuredCfg.noteId) || null);
+                setConfigNoteId(cfgId || ensuredCfg.noteId || null);
 
                 const loaded = await loadPlannerData();
                 const data = loaded.data || {};
@@ -1756,10 +1665,8 @@ function PlannerApp() {
                 setConfig(loadedCfg);
                 setConfigLoaded(true);
                 setViewMode(initialViewMode);
-                // weekOffset/dayOffset aren't persisted — always open on the
-                // current week/today. (Store them like _viewMode to change that.)
+                // weekOffset/dayOffset aren't persisted — always open on today.
 
-                // Apply persisted UI state from data
                 if (data._filters) {
                     setFilters({
                         kinds:   new Set(data._filters.kinds || []),
@@ -1775,20 +1682,19 @@ function PlannerApp() {
                 } else if (loaded.labelWidth) {
                     setBacklogWidth(loaded.labelWidth);
                 }
-                if (loaded.colorOverrides) setColorOverrides(loaded.colorOverrides);
-                if (loaded.themeOverrides) setThemeOverrides(loaded.themeOverrides);
+                setColorOverrides(loaded.colorOverrides);
+                setThemeOverrides(loaded.themeOverrides);
                 setScanArchived(loaded.scanArchived !== false);
 
-                // System noteIds to exclude from the scan (host JSX + state +
-                // config), so the planner never picks up its own infrastructure.
+                // Notes the scan must never pick up: host JSX + state + config.
                 const sysIds = [];
-                if (typeof api !== 'undefined' && api.startNote)   sysIds.push(api.startNote.noteId);
-                if (typeof api !== 'undefined' && api.currentNote) sysIds.push(api.currentNote.noteId);
-                if (ensured && ensured.noteId)                     sysIds.push(ensured.noteId);
-                if (cfgId)                                          sysIds.push(cfgId);
-                else if (ensuredCfg && ensuredCfg.noteId)           sysIds.push(ensuredCfg.noteId);
+                if (api.startNote)   sysIds.push(api.startNote.noteId);
+                if (api.currentNote) sysIds.push(api.currentNote.noteId);
+                sysIds.push(ensured.noteId);
+                if (cfgId) sysIds.push(cfgId);
+                else if (ensuredCfg.noteId) sysIds.push(ensuredCfg.noteId);
 
-                // Skip the initial scan if the user picked Include mode with no subtrees
+                // Include mode with no subtrees scans nothing — skip the scan.
                 const includeEmpty = loadedCfg.mode === 'include'
                     && (!loadedCfg.subtrees || loadedCfg.subtrees.length === 0);
 
@@ -1841,13 +1747,11 @@ function PlannerApp() {
         setPlannerData(prev => (prev._viewMode === viewMode ? prev : { ...prev, _viewMode: viewMode }));
     }, [viewMode]);
 
-    /* Notes the planner should never scan (this JSX note + state + config).
-       Hardcoded into the scan SQL, so a typo'd config can't accidentally
-       cause the planner to scan itself. */
+    /* Notes the planner must never scan (this JSX note + state + config). */
     const systemNoteIds = useMemo(() => {
         const ids = [];
-        if (typeof api !== 'undefined' && api.startNote)   ids.push(api.startNote.noteId);
-        if (typeof api !== 'undefined' && api.currentNote) ids.push(api.currentNote.noteId);
+        if (api.startNote)   ids.push(api.startNote.noteId);
+        if (api.currentNote) ids.push(api.currentNote.noteId);
         if (stateNoteId)  ids.push(stateNoteId);
         if (configNoteId) ids.push(configNoteId);
         return [...new Set(ids)];
@@ -1863,14 +1767,11 @@ function PlannerApp() {
         subtrees: (config.subtrees || []).map(s => s.noteId),
     }), [config.mode, config.subtrees]);
 
-    /* Full reload, used by the ⟳ button. Covers every case
-       (note deleted, kind changed, multiple notes edited).
-       Honors the current scope config and system-note exclusions. */
+    /* Full rescan (⟳ button). Honors current scope config and system exclusions. */
     const reload = useCallback(async () => {
         try {
             if (includeEmpty) {
-                // Don't scan; just clear visible tasks. JSON state is preserved.
-                setAllTasks([]);
+                setAllTasks([]);   // nothing to scan; preserve JSON state
                 return;
             }
             const tasks = await fetchAllTasks({ scanArchived, config, systemNoteIds });
@@ -1882,9 +1783,7 @@ function PlannerApp() {
         }
     }, [applyDateSuffixes, scanArchived, config, systemNoteIds, includeEmpty]);
 
-    /* Persist scope config when it changes (debounced).
-       The config note is guaranteed to exist by the time we get here
-       (ensurePlannerConfig ran on mount), so this is a pure update. */
+    /* Persist scope config on change (debounced). The note exists by now. */
     useEffect(() => {
         if (!configLoaded) return;
         if (skipFirstConfigSaveRef.current) {
@@ -1903,10 +1802,8 @@ function PlannerApp() {
         return () => clearTimeout(configSaveDebounceRef.current);
     }, [config, configLoaded]);
 
-    /* Auto-rescan when scope config changes (debounced).
-       The user changing include/exclude or adding/removing a subtree should
-       see the result immediately, without having to press ⟳. Debounced to
-       coalesce rapid chip changes into a single scan. */
+    /* Auto-rescan when scope config changes (debounced), so the user doesn't
+       have to press ⟳. */
     const skipFirstConfigReloadRef = useRef(true);
     useEffect(() => {
         if (!configLoaded) return;
@@ -1922,9 +1819,8 @@ function PlannerApp() {
     // eslint-disable-next-line — reload uses the latest config; only scope changes rescan.
     }, [scopeConfigKey, configLoaded]);
 
-    /* Single-note reload — used after mark-done and capture, 
-       Replaces all tasks belonging to that note with the freshly-scanned ones,
-       which is what keeps per-kind indices accurate after a mark-done. */
+    /* Single-note rescan after mark-done/capture. Replaces that note's tasks
+       with freshly-scanned ones, keeping per-kind indices accurate. */
     const reloadNote = useCallback(async (noteId) => {
         try {
             const fresh = await fetchTasksForNote(noteId, { scanArchived });
@@ -1935,29 +1831,22 @@ function PlannerApp() {
             setPlannerData(prev => applyDateSuffixes(fresh, prev));
         } catch (err) {
             console.error('reloadNote:', err);
-            // Fall back to a full reload on error
-            await reload();
+            await reload();   // fall back to a full reload
         }
     }, [applyDateSuffixes, scanArchived, reload]);
 
-    /* Mark done: optimistic UI (remove immediately) + per-note re-fetch (correct indices) */
+    /* Mark done: optimistic remove + per-note re-fetch to refresh kind indices. */
     const markDone = useCallback(async (task) => {
-        // ── Recurring guard (one new branch, decided before any work) ──────
-        // A task carrying an interval token (~7d) does not get marked DONE.
-        // Completion advances the due date along the task's own cadence grid
-        // (current due + interval, skipping any missed past slots — see
-        // nextRecurDate), relocates the card to that column, and leaves the note
-        // line untouched so the rule survives to recur. Only #plannerdata
-        // changes — no note write, no re-scan, and the card stays in `allTasks`
-        // (it relocates, not removes).
+        // Recurring tasks don't get marked DONE: completion advances the due
+        // date along the cadence grid (see nextRecurDate), relocates the card,
+        // and leaves the source line intact so it recurs. Only #plannerdata
+        // changes — no note write, no re-scan.
         if (task.interval) {
             const todayIso = toLocalIsoDate(todayBase());
             setPlannerData(prev => {
                 let next = { ...prev };
                 const oldDay = next[task.id];
-                // Advance from the current due date (or today if unscheduled).
                 const newDate = nextRecurDate(oldDay, task.interval, todayIso);
-                // Pull the card out of its old column's manual order.
                 if (oldDay && oldDay !== newDate && next._order && next._order[oldDay]) {
                     next._order = {
                         ...next._order,
@@ -1966,18 +1855,17 @@ function PlannerApp() {
                 }
                 next[task.id] = newDate;                       // advance + relocate
                 next = withOrderUpdate(next, newDate, task.id, null, allTasks);
-                // A completed occurrence starts a fresh cycle: clear its progress.
-                if (next._progress && task.id in next._progress) {
+                if (next._progress && task.id in next._progress) {  // fresh cycle
                     const nextProgress = { ...next._progress };
                     delete nextProgress[task.id];
                     next._progress = nextProgress;
                 }
                 return next;
             });
-            return;   // never reach the DONE path below
+            return;
         }
 
-        // Optimistic: remove from local state
+        // One-off: remove optimistically, then write DONE and re-scan the note.
         setAllTasks(prev => prev.filter(t => t.id !== task.id));
         setPlannerData(prev => {
             const next = { ...prev };
@@ -2008,11 +1896,8 @@ function PlannerApp() {
         }
     }, [reload, reloadNote, theme, allTasks]);
 
-    /* Dismiss an overdue badge: clears the stored schedule for this task.
-       The task remains in the source note and reappears as a normal
-       unscheduled item in the backlog. Mirrors the effect of dragging
-       the card from backlog→backlog, but as a single click on the × of
-       the warning badge (more discoverable). */
+    /* Dismiss an overdue badge: clear the stored schedule so the task drops
+       back to the backlog as unscheduled. */
     const dismissOverdue = useCallback((task) => {
         setPlannerData(prev => {
             const oldDay = prev[task.id];
@@ -2047,9 +1932,8 @@ function PlannerApp() {
         }
     }, [reload, reloadNote]);
 
-    /* Set a task's progress (0/25/50/75). 100 is handled separately via markDone.
-       Stored in plannerData._progress under the task ID. Setting 0 removes the
-       key to keep the map clean. */
+    /* Set a task's progress (0/25/50/75) in _progress, keyed by task id;
+       0 removes the key. Completion is the separate ✓ button (markDone). */
     const setProgress = useCallback((task, value) => {
         const v = Math.max(0, Math.min(75, Math.round(value)));
         setPlannerData(prev => {
@@ -2176,12 +2060,8 @@ function PlannerApp() {
         document.addEventListener('mouseup', onUp);
     }, [backlogWidth]);
 
-    /* Card click: opens the source note.
-       - default: opens in a side panel (lighter, reversible)
-       - Ctrl/Cmd-click: opens in a new tab
-       - middle-click: also opens in a new tab (browser convention)
-       - shift-click: also opens in a new tab
-       Falls back to activateNote if the relevant api method isn't available. */
+    /* Open the source note: split panel by default; new tab on
+       Ctrl/Cmd/Shift/middle-click. Falls back to activateNote. */
     const onCardClick = useCallback((task, e) => {
         if (dragState.current.dragMoved) return;
         const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1);

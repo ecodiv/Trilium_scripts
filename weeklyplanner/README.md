@@ -24,6 +24,8 @@
   * [Header controls](#header-controls)
 * [Filter what gets scanned](#filter-what-gets-scanned)
 * [Data storage](#data-storage)
+  * [Plannerdata](#plannerdata)
+  * [Compact state](#compact-state)
   * [Behaviour & scan settings](#behaviour-scan-settings)
   * [Theme colours](#theme-colours)
   * [Data safety](#data-safety)
@@ -128,7 +130,7 @@ Prefixes are case-sensitive and must be followed by a space. They must appear at
 Archived notes are included in the scan by default. To exclude archived notes, add the label `#wp_scan_archived=false` to the `#plannerdata` note.
 
 > [!WARNING]
-> A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task can make the planner treat it as a new task, so the planned day may be lost.
+> A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task will make the planner treat it as a new task. That means the planned date is lost and the task returns to the backlog column.
 
 ### The day card
 
@@ -270,7 +272,8 @@ From left to right:
 | **today** | Jump to the current week and today. Only visible when you are not already on the current range. |
 | **N/M planned** | N tasks scheduled in the visible range out of M total tasks |
 | **↺** | Clear all planning for the visible range (this day, work week, or week). The planner asks for confirmation first. |
-| **⟳** | Re-scan all notes for tasks |
+| **⟳** | Re-scan all notes for tasks. |
+| ![](images/tidy_up.svg) | Tidy up the state note. See the section 'Compact state'  for more information.|
 | **⚙** | Open the scan-scope config panel (include/exclude subtrees) |
 | **Filter** | Open the filter dropdown |
 
@@ -306,12 +309,26 @@ Tasks have their schedule stored by task ID in `#plannerdata`. If you include a 
 If you switch to Include mode but haven't added any subtrees, the scan is skipped entirely (it would otherwise scan nothing). The ⟳ button is disabled with a tooltip, and the panel shows a hint reminding you to
 drag in at least one subtree. 
 
-
 ## Data storage
+
+### Plannerdata
 
 The weekly planner uses the `#plannerdata` note to store which tasks are scheduled to which days, the order of cards within a day, the backlog width, your chosen view (week/work/day), and your active filters.
 
 You do not normally need to edit this note's content. To change a setting, edit the **attributes (labels)** of the `#plannerdata` note. After changing a label, refresh the planner with `Shift + Ctrl + R`, the `⟳` button, or a page reload.
+
+### Compact state
+
+Over time the planner can accumulate stale entries. This happens whenever a task you'd scheduled stops being found: you delete its line, or you edit its wording (including adding/removing a @date or #tag, which the planner treats as a new task). The task simply disappears from the board, but a leftover record of its old schedule stays behind in the background. These leftovers are harmless as they never show on the board. However, they slowly bloat the planner's saved data.
+
+To clean them up:
+
+1. click `tidy up` button (little broom). This will tell the planner to scan every note to detect scheduled tasks that do longer exist. 
+2. It then shows you how many leftover entries it found and asks you to confirm before removing anything. 
+3. Confirm toe remove the planner's own scheduling records for tasks that are already gone. Note, your tasks themselves are never touched.
+
+Compacting is safe to run any time and changes nothing visible on the board; think of it like emptying a recycle bin. Run it whenever you feel like tidying up.
+
 
 ### Behaviour & scan settings
 
