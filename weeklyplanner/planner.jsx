@@ -859,32 +859,26 @@ function getBacklog(allTasks, plannerData, todayIso) {
     return result;
 }
 
-function getOrderedBacklog(allTasks, plannerData, todayIso) {
-    const tasks = getBacklog(allTasks, plannerData, todayIso);
-    const order = ((plannerData._order || {}).backlog) || [];
+/* Stable sort by an explicit id order; ids absent from `order` keep their
+   original relative position at the end. O(n) index build, no indexOf scan. */
+function sortByOrder(tasks, order) {
+    const pos = new Map(order.map((id, i) => [id, i]));
     tasks.sort((a, b) => {
-        const ai = order.indexOf(a.id);
-        const bi = order.indexOf(b.id);
-        if (ai === -1 && bi === -1) return 0;
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
+        const ai = pos.has(a.id) ? pos.get(a.id) : Infinity;
+        const bi = pos.has(b.id) ? pos.get(b.id) : Infinity;
+        return ai === bi ? 0 : ai - bi;
     });
     return tasks;
 }
 
+function getOrderedBacklog(allTasks, plannerData, todayIso) {
+    const tasks = getBacklog(allTasks, plannerData, todayIso);
+    return sortByOrder(tasks, ((plannerData._order || {}).backlog) || []);
+}
+
 function getDayTasks(allTasks, plannerData, iso) {
     const tasks = allTasks.filter(t => plannerData[t.id] === iso);
-    const order = ((plannerData._order || {})[iso]) || [];
-    tasks.sort((a, b) => {
-        const ai = order.indexOf(a.id);
-        const bi = order.indexOf(b.id);
-        if (ai === -1 && bi === -1) return 0;
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
-    });
-    return tasks;
+    return sortByOrder(tasks, ((plannerData._order || {})[iso]) || []);
 }
 
 function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks, todayIso) {
@@ -905,6 +899,12 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks, tod
         order.push(taskId);
     }
     next._order[col] = order;
+    // A task lives in one column at a time; scheduling it onto a day must clear
+    // any slot it still held in the backlog order (filter returns a new array,
+    // so prev state is untouched).
+    if (col !== 'backlog' && next._order.backlog) {
+        next._order.backlog = next._order.backlog.filter(id => id !== taskId);
+    }
     return next;
 }
 
@@ -1360,6 +1360,9 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onContextMenu
     };
 
     const handleCardAuxClick = (e) => {
+        // Middle-click opens the source note in a new tab; other aux buttons do
+        // nothing. Right-click is handled separately by onContextMenu.
+        if (e.button === 1) { onClick(e); return; }
         e.preventDefault();
         e.stopPropagation();
     };
@@ -2182,7 +2185,9 @@ function PlannerApp() {
             }
         }
         dragState.current.insertBeforeId = beforeId;
-        setInsertMarker({ col, beforeId });
+        setInsertMarker(prev =>
+            (prev.col === col && prev.beforeId === beforeId) ? prev : { col, beforeId }
+        );
     }, []);
 
     const onZoneDragLeave = useCallback((e) => {
@@ -2299,7 +2304,7 @@ function PlannerApp() {
         e.stopPropagation();
         if (dragState.current.dragMoved) return;
         const menuWidth = 210;
-        const menuHeight = 265;
+        const menuHeight = 235;
         const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuWidth - 8));
         const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuHeight - 8));
         setContextMenu({ task, x, y });
@@ -2322,9 +2327,9 @@ function PlannerApp() {
     /* Open the source note: split panel by default; new tab on
        Ctrl/Cmd/Shift/middle-click. Falls back to activateNote. */
     const onCardClick = useCallback((task, e) => {
-        if (e && (e.defaultPrevented || e.button !== 0)) return;
+        if (e && (e.defaultPrevented || (e.button !== 0 && e.button !== 1))) return;
         if (dragState.current.dragMoved) return;
-        const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey);
+        const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1);
         try {
             if (wantsNewTab) {
                 api.openTabWithNote(task.noteId, true);
@@ -2422,7 +2427,10 @@ function PlannerApp() {
     // Recomputed every render — cheap, and keeps overdue accurate if the
     // planner is left open across midnight.
     const todayIso = toLocalIsoDate(todayBase());
-    const backlog = getOrderedBacklog(filteredTasks, plannerData, todayIso);
+    const backlog = useMemo(
+        () => getOrderedBacklog(filteredTasks, plannerData, todayIso),
+        [filteredTasks, plannerData, todayIso]
+    );
     const overdueCount = backlog.reduce((n, t) => n + (t.isOverdue ? 1 : 0), 0);
     const unplannedCount = backlog.length - overdueCount;
     const subtreeCount = (config.subtrees || []).length;
@@ -2551,8 +2559,7 @@ function PlannerApp() {
                     <div class="pl-context-title" title={contextMenu.task.text}>Move task</div>
                     <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(0))}>Today</button>
                     <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(1))}>Tomorrow</button>
-                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(7, plannerData[contextMenu.task.id]))}>+1 week</button>
-                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(-7, plannerData[contextMenu.task.id]))}>−1 week</button>
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(7))}>+1 week</button>
                     <div class="pl-context-sep" />
                     <input
                         class="pl-context-date"
