@@ -33,11 +33,11 @@ import { runOnBackend, runAsyncOnBackendWithManualTransactionHandling, activateN
 /* ── CONSTANTS — kinds, colors, dimensions ─────────────────────── */
 
 const KINDS = {
-    TODO:   { label: 'TODO',   color: '#ed7a2a' },
-    IDEA:   { label: 'IDEA',   color: '#348cbb' },
-    CHECK:  { label: 'CHECK',  color: '#42ae2e' },
+    TODO: { label: 'TODO', color: '#ed7a2a' },
+    IDEA: { label: 'IDEA', color: '#348cbb' },
+    CHECK: { label: 'CHECK', color: '#42ae2e' },
     TOREAD: { label: 'TOREAD', color: '#9d4edd' },
-    DEFER:  { label: 'DEFER',  color: '#589393' },
+    DEFER: { label: 'DEFER', color: '#589393' },
 };
 const KIND_KEYS = Object.keys(KINDS);
 const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
@@ -74,20 +74,20 @@ function getKindColor(kind, overrides) {
    fallback) and can be overridden per-install via #wp_* labels — see
    themeLabelMap in loadPlannerData. Accent tokens are fixed literals. */
 const THEME_DEFAULTS = {
-    bgRoot:     'var(--main-background-color, #fff)',           // root, header, buttons, inputs, dialogs
-    bgPanel:    'var(--accented-background-color, #fafafa)',    // columns / panels
-    bgTask:     'var(--more-accented-background-color, #f3f3f3)', // task cards
-    bgHover:    'var(--hover-item-background-color, #eee)',     // button / row hover
-    bgActive:   'var(--active-item-background-color, #444)',    // selected toggle segment
+    bgRoot: 'var(--main-background-color, #fff)',           // root, header, buttons, inputs, dialogs
+    bgPanel: 'var(--accented-background-color, #fafafa)',    // columns / panels
+    bgTask: 'var(--more-accented-background-color, #f3f3f3)', // task cards
+    bgHover: 'var(--hover-item-background-color, #eee)',     // button / row hover
+    bgActive: 'var(--active-item-background-color, #444)',    // selected toggle segment
     textActive: 'var(--active-item-text-color, #fff)',         // text on selected segment
-    text:       'var(--main-text-color, #333)',                // primary text
-    textMuted:  'var(--muted-text-color, #666)',               // labels, subtitles, muted buttons
-    border:     'var(--main-border-color, #d0d0d0)',           // borders / separators
+    text: 'var(--main-text-color, #333)',                // primary text
+    textMuted: 'var(--muted-text-color, #666)',               // labels, subtitles, muted buttons
+    border: 'var(--main-border-color, #d0d0d0)',           // borders / separators
 
-    colorDoneText:  '#cfcfcf',                          // grey written into source notes (must stay literal)
-    colorDoneBtn:   '#79a574',                          // mark-done button color
-    colorDateTag:   'var(--muted-text-color, #a8a8a8)', // inline @date token color
-    colorProgress:  '#79a574',                          // progress-bar fill
+    colorDoneText: '#cfcfcf',                          // grey written into source notes (must stay literal)
+    colorDoneBtn: '#79a574',                          // mark-done button color
+    colorDateTag: 'var(--muted-text-color, #a8a8a8)', // inline @date token color
+    colorProgress: '#79a574',                          // progress-bar fill
 };
 
 /* Merge defaults with label overrides, validating each override against the
@@ -108,8 +108,8 @@ function resolveTheme(overrides) {
 }
 
 const BACKLOG_WIDTH_DEFAULT = 260;
-const BACKLOG_WIDTH_MIN     = 150;
-const BACKLOG_WIDTH_MAX     = 600;
+const BACKLOG_WIDTH_MIN = 150;
+const BACKLOG_WIDTH_MAX = 600;
 
 /* Scan archived notes by default; override with #wp_scan_archived on #plannerdata. */
 const SCAN_ARCHIVED_DEFAULT = true;
@@ -134,7 +134,7 @@ function toLocalIsoDate(d) {
 /* Returns 'YYYY-MM-DD' | null for a token like 'today', 'mon', '2026-05-20' */
 function tokenToIsoDate(token, baseDate) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return token;
-    if (token === 'today')    return toLocalIsoDate(baseDate);
+    if (token === 'today') return toLocalIsoDate(baseDate);
     if (token === 'tomorrow') {
         const d = new Date(baseDate);
         d.setDate(baseDate.getDate() + 1);
@@ -142,7 +142,7 @@ function tokenToIsoDate(token, baseDate) {
     }
     if (token in WEEKDAY_ALIASES) {
         const target = WEEKDAY_ALIASES[token];
-        const now    = baseDate.getDay();
+        const now = baseDate.getDay();
         let delta = target - now;
         if (delta < 0) delta += 7;
         const d = new Date(baseDate);
@@ -248,17 +248,17 @@ async function loadPlannerData() {
         const scanLabel = labelStr('wp_scan_archived');
         if (scanLabel != null) {
             const v = scanLabel.toLowerCase();
-            if (/^(false|no|0|off)$/.test(v))      scanArchived = false;
-            else if (/^(true|yes|1|on)$/.test(v))  scanArchived = true;
+            if (/^(false|no|0|off)$/.test(v)) scanArchived = false;
+            else if (/^(true|yes|1|on)$/.test(v)) scanArchived = true;
         }
 
         // Per-kind color overrides:
         const kindLabelMap = {
-            TODO:   'wp_todo',
-            IDEA:   'wp_idea',
-            CHECK:  'wp_check',
+            TODO: 'wp_todo',
+            IDEA: 'wp_idea',
+            CHECK: 'wp_check',
             TOREAD: 'wp_toread',
-            DEFER:  'wp_defer',
+            DEFER: 'wp_defer',
         };
         const colorOverrides = {};
         for (const kind in kindLabelMap) {
@@ -268,17 +268,17 @@ async function loadPlannerData() {
 
         // Theme overrides — any CSS color string per #wp_* label (see header).
         const themeLabelMap = {
-            bgRoot:         'wp_bg_root',
-            bgPanel:        'wp_bg_panel',
-            bgTask:         'wp_bg_task',
-            bgHover:        'wp_bg_hover',
-            text:           'wp_color_text',
-            textMuted:      'wp_color_muted',
-            border:         'wp_border',
-            colorDoneText:  'wp_color_done_text',
-            colorDoneBtn:   'wp_color_done_btn',
-            colorDateTag:   'wp_color_date_tag',
-            colorProgress:  'wp_color_progress',
+            bgRoot: 'wp_bg_root',
+            bgPanel: 'wp_bg_panel',
+            bgTask: 'wp_bg_task',
+            bgHover: 'wp_bg_hover',
+            text: 'wp_color_text',
+            textMuted: 'wp_color_muted',
+            border: 'wp_border',
+            colorDoneText: 'wp_color_done_text',
+            colorDoneBtn: 'wp_color_done_btn',
+            colorDateTag: 'wp_color_date_tag',
+            colorProgress: 'wp_color_progress',
         };
         const themeOverrides = {};
         for (const key in themeLabelMap) {
@@ -447,13 +447,13 @@ async function fetchAllTasks({
         );
         const cleanText = s => s
             .replace(/<[^>]+>/g, '')
-            .replace(/&nbsp;/g,  ' ')
-            .replace(/&amp;/g,   '&')
-            .replace(/&lt;/g,    '<')
-            .replace(/&gt;/g,    '>')
-            .replace(/&quot;/g,  '"')
-            .replace(/&#39;/g,   "'")
-            .replace(/\s+/g,     ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
             .trim();
 
         /* Quote a JS array of strings into a SQL IN-list. */
@@ -565,13 +565,13 @@ async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT 
         );
         const cleanText = s => s
             .replace(/<[^>]+>/g, '')
-            .replace(/&nbsp;/g,  ' ')
-            .replace(/&amp;/g,   '&')
-            .replace(/&lt;/g,    '<')
-            .replace(/&gt;/g,    '>')
-            .replace(/&quot;/g,  '"')
-            .replace(/&#39;/g,   "'")
-            .replace(/\s+/g,     ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
             .trim();
 
         const note = api.getNote(targetNoteId);
@@ -635,14 +635,14 @@ function flattenGroups(groups) {
             const id = `${g.noteId}::${t.kind}::${idText}`;
             all.push({
                 id,
-                kind:         t.kind,
-                text:         t.text,
-                tags:         meta.tags,
-                isoDate:      meta.isoDate,
+                kind: t.kind,
+                text: t.text,
+                tags: meta.tags,
+                isoDate: meta.isoDate,
                 interval,                              // { token, n, unit } | null
                 indexForKind: t.indexForKind,
-                noteId:       g.noteId,
-                noteTitle:    g.title,
+                noteId: g.noteId,
+                noteTitle: g.title,
             });
         }
     }
@@ -720,13 +720,13 @@ function getWeekCols(offset) {
     const dow = ref.getDay();
     const mon = new Date(ref);
     mon.setDate(ref.getDate() + (dow === 0 ? -6 : 1 - dow));
-    const labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return labels.map((label, i) => {
         const d = new Date(mon);
         d.setDate(mon.getDate() + i);
         const iso = toLocalIsoDate(d);
         return {
-            key:     iso,
+            key: iso,
             label,
             dateStr: `${d.getDate()}/${d.getMonth() + 1}`,
             isToday: d.getTime() === base.getTime(),
@@ -735,7 +735,7 @@ function getWeekCols(offset) {
 }
 
 function weekLabel(cols) {
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     if (!cols || !cols.length) return '';
     const d0 = new Date(cols[0].key + 'T12:00:00');
     const d1 = new Date(cols[cols.length - 1].key + 'T12:00:00');
@@ -748,7 +748,7 @@ function weekLabel(cols) {
 }
 
 function getDayCol(offset) {
-    const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const base = todayBase();
     const d = new Date(base);
     d.setDate(base.getDate() + offset);
@@ -761,22 +761,57 @@ function getDayCol(offset) {
     };
 }
 
+function isoToLocalDate(iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return null;
+    const [y, m, d] = iso.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    date.setHours(0, 0, 0, 0);
+    return isNaN(date.getTime()) ? null : date;
+}
+
+function dayOffsetForIso(iso) {
+    const target = isoToLocalDate(iso);
+    if (!target) return 0;
+    const base = todayBase();
+    return Math.round((target.getTime() - base.getTime()) / 86400000);
+}
+
+function weekOffsetForIso(iso) {
+    const target = isoToLocalDate(iso);
+    if (!target) return 0;
+    const base = todayBase();
+    const mondayOf = (date) => {
+        const d = new Date(date);
+        const dow = d.getDay();
+        d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+        d.setHours(0, 0, 0, 0);
+        return d;
+    };
+    return Math.round((mondayOf(target).getTime() - mondayOf(base).getTime()) / (86400000 * 7));
+}
+
+function relativeIsoDate(days, baseIso = null) {
+    const d = isoToLocalDate(baseIso) || todayBase();
+    d.setDate(d.getDate() + days);
+    return toLocalIsoDate(d);
+}
+
 const VIEW_MODES = {
     WEEK: 'week',
     WORK: 'work',
-    DAY:  'day',
+    DAY: 'day',
 };
 
 /* Short "27 May" / "27 May '25" formatter for the overdue badge.
    Omits the year if it matches the current year. */
 function formatOverdueDate(iso) {
     if (!iso || typeof iso !== 'string') return '';
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const d = new Date(iso + 'T12:00:00');
     if (isNaN(d.getTime())) return iso;
     const day = d.getDate();
     const mon = months[d.getMonth()];
-    const yr  = d.getFullYear();
+    const yr = d.getFullYear();
     const thisYear = new Date().getFullYear();
     return yr === thisYear ? `${day} ${mon}` : `${day} ${mon} '${String(yr).slice(2)}`;
 }
@@ -824,6 +859,20 @@ function getBacklog(allTasks, plannerData, todayIso) {
     return result;
 }
 
+function getOrderedBacklog(allTasks, plannerData, todayIso) {
+    const tasks = getBacklog(allTasks, plannerData, todayIso);
+    const order = ((plannerData._order || {}).backlog) || [];
+    tasks.sort((a, b) => {
+        const ai = order.indexOf(a.id);
+        const bi = order.indexOf(b.id);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
+    return tasks;
+}
+
 function getDayTasks(allTasks, plannerData, iso) {
     const tasks = allTasks.filter(t => plannerData[t.id] === iso);
     const order = ((plannerData._order || {})[iso]) || [];
@@ -838,11 +887,16 @@ function getDayTasks(allTasks, plannerData, iso) {
     return tasks;
 }
 
-function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks) {
+function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks, todayIso) {
     const next = { ...plannerData };
     if (!next._order) next._order = {};
     else next._order = { ...next._order };
-    let order = (next._order[col] || getDayTasks(allTasks, plannerData, col).map(t => t.id)).slice();
+
+    const currentIds = col === 'backlog'
+        ? getOrderedBacklog(allTasks, plannerData, todayIso || toLocalIsoDate(todayBase())).map(t => t.id)
+        : getDayTasks(allTasks, plannerData, col).map(t => t.id);
+
+    let order = (next._order[col] || currentIds).slice();
     order = order.filter(id => id !== taskId);
     if (insertBeforeId) {
         const idx = order.indexOf(insertBeforeId);
@@ -864,7 +918,7 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks) {
    non-text) are KEPT, since protected notes are never scanned and pruning them
    would lose live schedules. Returns { data, removed } (removed = orphan count). */
 function compactPlannerData(plannerData, { liveIds, readableNoteIds, existingNoteIds }) {
-    const live     = liveIds instanceof Set ? liveIds : new Set(liveIds);
+    const live = liveIds instanceof Set ? liveIds : new Set(liveIds);
     const readable = readableNoteIds instanceof Set ? readableNoteIds : new Set(readableNoteIds);
     const existing = existingNoteIds instanceof Set ? existingNoteIds : new Set(existingNoteIds);
 
@@ -1187,6 +1241,59 @@ body.pl-resizing * { cursor:col-resize !important; }
     background:rgba(217,112,112,0.15);
     color:#a83333;
 }
+
+.pl-context-menu {
+    position:fixed;
+    z-index:10001;
+    min-width:190px;
+    background:${theme.bgRoot};
+    border:1px solid ${theme.border};
+    border-radius:7px;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);
+    padding:6px;
+    color:${theme.text};
+}
+.pl-context-title {
+    padding:5px 8px 7px;
+    margin-bottom:3px;
+    border-bottom:1px solid ${theme.border};
+    color:${theme.textMuted};
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+.pl-context-item {
+    display:flex;
+    align-items:center;
+    width:100%;
+    gap:8px;
+    padding:6px 8px;
+    border:0;
+    border-radius:5px;
+    background:transparent;
+    color:${theme.text};
+    font:inherit;
+    font-size:13px;
+    text-align:left;
+    cursor:pointer;
+}
+.pl-context-item:hover { background:${theme.bgHover}; }
+.pl-context-sep { height:1px; background:${theme.border}; margin:5px 4px; }
+.pl-context-date {
+    width:100%;
+    box-sizing:border-box;
+    background:${theme.bgRoot};
+    color:${theme.text};
+    border:1px solid ${theme.border};
+    border-radius:5px;
+    padding:5px 7px;
+    font:inherit;
+    font-size:13px;
+}
 `;
 }
 
@@ -1237,8 +1344,31 @@ function renderTaskText(text) {
     return parts;
 }
 
-function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, onSetProgress, onDismissOverdue, onDragStart, onDragEnd }) {
+function TaskCard({ task, progress, overrides, draggable, onClick, onContextMenu, onMarkDone, onSetProgress, onDismissOverdue, onDragStart, onDragEnd }) {
     const [working, setWorking] = useState(false);
+
+    const handleCardClick = (e) => {
+        // Only a primary-button click opens the source note. Right-click is
+        // reserved for the move menu, and aux-clicks must not fall through to
+        // the normal open-note handler.
+        if (e.button !== 0 || e.defaultPrevented) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        onClick(e);
+    };
+
+    const handleCardAuxClick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    const handleCardContextMenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu(e);
+    };
 
     const handleDone = async (e) => {
         e.stopPropagation();
@@ -1268,8 +1398,10 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
             class="pl-task"
             draggable={draggable}
             data-task-id={task.id}
-            onClick={onClick}
-            onAuxClick={onClick}
+            onClick={handleCardClick}
+            onAuxClick={handleCardAuxClick}
+            onContextMenu={handleCardContextMenu}
+            onMouseDown={(e) => { if (e.button !== 0) e.stopPropagation(); }}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
         >
@@ -1327,7 +1459,7 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onMarkDone, o
 
 function Column({
     col, tasks, mobile, isResizing, widthStyle, overrides, progressMap,
-    onCardClick, onCardMarkDone, onCardSetProgress, onCardDismissOverdue,
+    onCardClick, onCardContextMenu, onCardMarkDone, onCardSetProgress, onCardDismissOverdue,
     onCardDragStart, onCardDragEnd,
     onDragOver, onDragLeave, onDrop,
     onResizeStart, insertMarkerBeforeId,
@@ -1363,6 +1495,7 @@ function Column({
                             overrides={overrides}
                             draggable={!mobile}
                             onClick={(e) => onCardClick(t, e)}
+                            onContextMenu={(e) => onCardContextMenu(t, e)}
                             onMarkDone={onCardMarkDone}
                             onSetProgress={onCardSetProgress}
                             onDismissOverdue={onCardDismissOverdue}
@@ -1443,7 +1576,7 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
         if (!btn) return;
         const r = btn.getBoundingClientRect();
         setPanelPos({
-            top:   r.bottom + 4,                          // 4px below the trigger
+            top: r.bottom + 4,                          // 4px below the trigger
             right: Math.max(8, window.innerWidth - r.right), // align panel right edge to button right edge
         });
     }, [open]);
@@ -1543,8 +1676,8 @@ function FilterDropdown({ allTasks, filters, onChange, overrides }) {
                     )}
                     {activeCount > 0 && (
                         <button class="pl-btn muted"
-                                style={{ marginTop: '8px', width: '100%' }}
-                                onClick={clearAll}>
+                            style={{ marginTop: '8px', width: '100%' }}
+                            onClick={clearAll}>
                             Clear filters
                         </button>
                     )}
@@ -1656,15 +1789,15 @@ function ConfigPanel({ config, onChange }) {
 /* ── ROOT COMPONENT ────────────────────────────────────────────── */
 
 function PlannerApp() {
-    const [allTasks,    setAllTasks]      = useState([]);
-    const [plannerData, setPlannerData]   = useState({});
-    const [weekOffset,  setWeekOffset]    = useState(0);
-    const [dayOffset,   setDayOffset]     = useState(0);
-    const [viewMode,    setViewMode]      = useState(VIEW_MODES.WEEK);
+    const [allTasks, setAllTasks] = useState([]);
+    const [plannerData, setPlannerData] = useState({});
+    const [weekOffset, setWeekOffset] = useState(0);
+    const [dayOffset, setDayOffset] = useState(0);
+    const [viewMode, setViewMode] = useState(VIEW_MODES.WEEK);
     const [backlogWidth, setBacklogWidth] = useState(BACKLOG_WIDTH_DEFAULT);
-    const [loading,     setLoading]       = useState(true);
-    const [error,       setError]         = useState(null);
-    const [capturing,   setCapturing]     = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [capturing, setCapturing] = useState(false);
     const [colorOverrides, setColorOverrides] = useState({});
     const [themeOverrides, setThemeOverrides] = useState({});
     const [scanArchived, setScanArchived] = useState(SCAN_ARCHIVED_DEFAULT);
@@ -1673,11 +1806,12 @@ function PlannerApp() {
     // Drives include/exclude subtree filtering at scan time.
     const [config, setConfig] = useState(DEFAULT_PLANNER_CONFIG);
     const [configNoteId, setConfigNoteId] = useState(null);
-    const [stateNoteId,  setStateNoteId]  = useState(null);  // for scan exclusion
+    const [stateNoteId, setStateNoteId] = useState(null);  // for scan exclusion
     const [configLoaded, setConfigLoaded] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
     const [pendingClear, setPendingClear] = useState(null);
     const [pendingCompact, setPendingCompact] = useState(null);  // { removed, data } | null
+    const [contextMenu, setContextMenu] = useState(null);        // { task, x, y } | null
     const [compacting, setCompacting] = useState(false);
     const configSaveDebounceRef = useRef(null);
     const configReloadDebounceRef = useRef(null);
@@ -1688,7 +1822,7 @@ function PlannerApp() {
 
     const dragState = useRef({ id: null, insertBeforeId: null, dragMoved: false });
     const [insertMarker, setInsertMarker] = useState({ col: null, beforeId: null });
-    const [isResizing,   setIsResizing]   = useState(false);
+    const [isResizing, setIsResizing] = useState(false);
 
     // Resolved theme: defaults merged with label-based overrides.
     const theme = useMemo(() => resolveTheme(themeOverrides), [themeOverrides]);
@@ -1738,8 +1872,8 @@ function PlannerApp() {
 
                 if (data._filters) {
                     setFilters({
-                        kinds:   new Set(data._filters.kinds || []),
-                        tags:    new Set(data._filters.tags  || []),
+                        kinds: new Set(data._filters.kinds || []),
+                        tags: new Set(data._filters.tags || []),
                         tagMode: data._filters.tagMode === 'OR' ? 'OR' : 'AND',
                     });
                 }
@@ -1757,7 +1891,7 @@ function PlannerApp() {
 
                 // Notes the scan must never pick up: host JSX + state + config.
                 const sysIds = [];
-                if (api.startNote)   sysIds.push(api.startNote.noteId);
+                if (api.startNote) sysIds.push(api.startNote.noteId);
                 if (api.currentNote) sysIds.push(api.currentNote.noteId);
                 sysIds.push(ensured.noteId);
                 if (cfgId) sysIds.push(cfgId);
@@ -1801,8 +1935,8 @@ function PlannerApp() {
         setPlannerData(prev => ({
             ...prev,
             _filters: {
-                kinds:   Array.from(filters.kinds),
-                tags:    Array.from(filters.tags),
+                kinds: Array.from(filters.kinds),
+                tags: Array.from(filters.tags),
                 tagMode: filters.tagMode || 'AND',
             },
         }));
@@ -1819,9 +1953,9 @@ function PlannerApp() {
     /* Notes the planner must never scan (this JSX note + state + config). */
     const systemNoteIds = useMemo(() => {
         const ids = [];
-        if (api.startNote)   ids.push(api.startNote.noteId);
+        if (api.startNote) ids.push(api.startNote.noteId);
         if (api.currentNote) ids.push(api.currentNote.noteId);
-        if (stateNoteId)  ids.push(stateNoteId);
+        if (stateNoteId) ids.push(stateNoteId);
         if (configNoteId) ids.push(configNoteId);
         return [...new Set(ids)];
     }, [stateNoteId, configNoteId]);
@@ -1885,7 +2019,7 @@ function PlannerApp() {
             reload();
         }, 500);
         return () => clearTimeout(configReloadDebounceRef.current);
-    // eslint-disable-next-line — reload uses the latest config; only scope changes rescan.
+        // eslint-disable-next-line — reload uses the latest config; only scope changes rescan.
     }, [scopeConfigKey, configLoaded]);
 
     /* Single-note rescan after mark-done/capture. Replaces that note's tasks
@@ -2038,10 +2172,6 @@ function PlannerApp() {
         e.preventDefault();
         const zone = e.currentTarget;
         zone.classList.add('drag-over');
-        if (col === 'backlog') {
-            setInsertMarker({ col: null, beforeId: null });
-            return;
-        }
         const cards = Array.from(zone.querySelectorAll('.pl-task:not(.dragging)'));
         let beforeId = '__end__';
         for (const card of cards) {
@@ -2081,6 +2211,10 @@ function PlannerApp() {
                         [oldDay]: next._order[oldDay].filter(x => x !== id),
                     };
                 }
+                const insertBefore = dragState.current.insertBeforeId === '__end__'
+                    ? null
+                    : dragState.current.insertBeforeId;
+                next = withOrderUpdate(next, 'backlog', id, insertBefore, allTasks, toLocalIsoDate(todayBase()));
             } else {
                 const oldDay = next[id];
                 if (oldDay && oldDay !== col && next._order && next._order[oldDay]) {
@@ -2129,11 +2263,68 @@ function PlannerApp() {
         document.addEventListener('mouseup', onUp);
     }, [backlogWidth]);
 
+    const jumpToScheduledDate = useCallback((iso) => {
+        if (!iso) return;
+        if (viewMode === VIEW_MODES.DAY) setDayOffset(dayOffsetForIso(iso));
+        else setWeekOffset(weekOffsetForIso(iso));
+    }, [viewMode]);
+
+    const moveTaskFromMenu = useCallback((task, targetIso) => {
+        setPlannerData(prev => {
+            let next = { ...prev };
+            const oldDay = next[task.id];
+            if (oldDay && next._order && next._order[oldDay]) {
+                next._order = {
+                    ...next._order,
+                    [oldDay]: next._order[oldDay].filter(id => id !== task.id),
+                };
+            }
+
+            if (!targetIso) {
+                delete next[task.id];
+                next = withOrderUpdate(next, 'backlog', task.id, null, allTasks, toLocalIsoDate(todayBase()));
+            } else {
+                next[task.id] = targetIso;
+                next = withOrderUpdate(next, targetIso, task.id, null, allTasks);
+            }
+            return next;
+        });
+
+        setContextMenu(null);
+        if (targetIso) jumpToScheduledDate(targetIso);
+    }, [allTasks, jumpToScheduledDate]);
+
+    const openCardContextMenu = useCallback((task, e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dragState.current.dragMoved) return;
+        const menuWidth = 210;
+        const menuHeight = 265;
+        const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuWidth - 8));
+        const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuHeight - 8));
+        setContextMenu({ task, x, y });
+    }, []);
+
+    useEffect(() => {
+        if (!contextMenu) return;
+        const close = () => setContextMenu(null);
+        const onKey = (e) => { if (e.key === 'Escape') close(); };
+        document.addEventListener('mousedown', close);
+        document.addEventListener('scroll', close, true);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', close);
+            document.removeEventListener('scroll', close, true);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [contextMenu]);
+
     /* Open the source note: split panel by default; new tab on
        Ctrl/Cmd/Shift/middle-click. Falls back to activateNote. */
     const onCardClick = useCallback((task, e) => {
+        if (e && (e.defaultPrevented || e.button !== 0)) return;
         if (dragState.current.dragMoved) return;
-        const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1);
+        const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey);
         try {
             if (wantsNewTab) {
                 api.openTabWithNote(task.noteId, true);
@@ -2214,7 +2405,7 @@ function PlannerApp() {
         if (viewMode === VIEW_MODES.WORK) return weekCols.slice(0, 5);
         return weekCols;
     }, [viewMode, weekCols, dayCol]);
-    const wkLabel  = useMemo(() => weekLabel(visibleDateCols), [visibleDateCols]);
+    const wkLabel = useMemo(() => weekLabel(visibleDateCols), [visibleDateCols]);
     const visibleKeys = useMemo(() => new Set(visibleDateCols.map(c => c.key)), [visibleDateCols]);
     const isCurrentRange = viewMode === VIEW_MODES.DAY ? dayOffset === 0 : weekOffset === 0;
     const clearScopeLabel = viewMode === VIEW_MODES.DAY
@@ -2226,12 +2417,12 @@ function PlannerApp() {
         [allTasks, filters]
     );
 
-    const total   = filteredTasks.length;
+    const total = filteredTasks.length;
     const planned = filteredTasks.filter(t => visibleKeys.has(plannerData[t.id])).length;
     // Recomputed every render — cheap, and keeps overdue accurate if the
     // planner is left open across midnight.
     const todayIso = toLocalIsoDate(todayBase());
-    const backlog = getBacklog(filteredTasks, plannerData, todayIso);
+    const backlog = getOrderedBacklog(filteredTasks, plannerData, todayIso);
     const overdueCount = backlog.reduce((n, t) => n + (t.isOverdue ? 1 : 0), 0);
     const unplannedCount = backlog.length - overdueCount;
     const subtreeCount = (config.subtrees || []).length;
@@ -2336,9 +2527,9 @@ function PlannerApp() {
                     aria-label="Compact planner state"
                 >
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                         stroke="currentColor" stroke-width="0.8"
-                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="m 20.621623,2.0298933 -6.901428,6.901423 -0.884242,-0.884249 v -0.0213 l -0.0213,-0.0213 c -0.442115,-0.393937 -1.019032,-0.582649 -1.574381,-0.582649 -0.55535,0 -1.091829,0.207611 -1.5096857,0.625439 l -0.107826,0.08626 -0.345049,0.345089 -0.237212,0.19412 -6.297549,4.8957007 -0.603873,0.49603 7.440596,7.440602 0.4960357,-0.603876 4.87413,-6.254417 0.0213,0.0213 0.690146,-0.690143 h 0.0213 l 0.0213,-0.0213 c 0.787198,-0.886938 0.792591,-2.248348 -0.04313,-3.084072 l -0.948949,-0.9489397 6.901423,-6.901423 z m -9.381621,6.772016 c 0.212997,-0.0057 0.447514,0.06742 0.625437,0.215641 0.0081,0.0057 0.01322,0.01615 0.0213,0.0213 l 2.803703,2.8037017 c 0.258796,0.258796 0.283064,0.808763 0,1.164617 -0.01084,0.01328 -0.01084,0.02953 -0.0213,0.04314 l -0.215693,0.194122 -3.989885,-3.9898847 0.237212,-0.237212 c 0.132099,-0.132096 0.326214,-0.210255 0.539175,-0.215642 z m -1.8331947,1.3371547 4.0977227,4.09772 -4.0545867,5.176064 -0.992082,-0.992079 1.488121,-1.552815 -0.99208,-0.948951 -1.466552,1.531259 -0.905813,-0.905815 2.674304,-2.695869 -0.970513,-0.970518 -2.695872,2.674309 -1.358715,-1.35872 z" />
+                        stroke="currentColor" stroke-width="0.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="m 20.621623,2.0298933 -6.901428,6.901423 -0.884242,-0.884249 v -0.0213 l -0.0213,-0.0213 c -0.442115,-0.393937 -1.019032,-0.582649 -1.574381,-0.582649 -0.55535,0 -1.091829,0.207611 -1.5096857,0.625439 l -0.107826,0.08626 -0.345049,0.345089 -0.237212,0.19412 -6.297549,4.8957007 -0.603873,0.49603 7.440596,7.440602 0.4960357,-0.603876 4.87413,-6.254417 0.0213,0.0213 0.690146,-0.690143 h 0.0213 l 0.0213,-0.0213 c 0.787198,-0.886938 0.792591,-2.248348 -0.04313,-3.084072 l -0.948949,-0.9489397 6.901423,-6.901423 z m -9.381621,6.772016 c 0.212997,-0.0057 0.447514,0.06742 0.625437,0.215641 0.0081,0.0057 0.01322,0.01615 0.0213,0.0213 l 2.803703,2.8037017 c 0.258796,0.258796 0.283064,0.808763 0,1.164617 -0.01084,0.01328 -0.01084,0.02953 -0.0213,0.04314 l -0.215693,0.194122 -3.989885,-3.9898847 0.237212,-0.237212 c 0.132099,-0.132096 0.326214,-0.210255 0.539175,-0.215642 z m -1.8331947,1.3371547 4.0977227,4.09772 -4.0545867,5.176064 -0.992082,-0.992079 1.488121,-1.552815 -0.99208,-0.948951 -1.466552,1.531259 -0.905813,-0.905815 2.674304,-2.695869 -0.970513,-0.970518 -2.695872,2.674309 -1.358715,-1.35872 z" />
                     </svg>
                 </button>
                 <FilterDropdown
@@ -2348,6 +2539,33 @@ function PlannerApp() {
                     overrides={colorOverrides}
                 />
             </div>
+
+            {contextMenu && (
+                <div
+                    class="pl-context-menu"
+                    style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                >
+                    <div class="pl-context-title" title={contextMenu.task.text}>Move task</div>
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(0))}>Today</button>
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(1))}>Tomorrow</button>
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(7, plannerData[contextMenu.task.id]))}>+1 week</button>
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, relativeIsoDate(-7, plannerData[contextMenu.task.id]))}>−1 week</button>
+                    <div class="pl-context-sep" />
+                    <input
+                        class="pl-context-date"
+                        type="date"
+                        value={plannerData[contextMenu.task.id] || toLocalIsoDate(todayBase())}
+                        title="Pick a date"
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => e.target.value && moveTaskFromMenu(contextMenu.task, e.target.value)}
+                    />
+                    <div class="pl-context-sep" />
+                    <button class="pl-context-item" onClick={() => moveTaskFromMenu(contextMenu.task, null)}>Backlog</button>
+                </div>
+            )}
 
             {pendingClear && (
                 <div
@@ -2441,6 +2659,7 @@ function PlannerApp() {
                             progressMap={plannerData._progress}
                             insertMarkerBeforeId={marker}
                             onCardClick={onCardClick}
+                            onCardContextMenu={openCardContextMenu}
                             onCardMarkDone={markDone}
                             onCardSetProgress={setProgress}
                             onCardDismissOverdue={dismissOverdue}
