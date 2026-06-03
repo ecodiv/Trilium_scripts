@@ -27,29 +27,52 @@
  *     (see THEME_DEFAULTS / loadPlannerData). Accent colours are fixed literals.
  */
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "trilium:preact";
+import { useEffect, useRef, useState, useCallback, useMemo, Fragment } from "trilium:preact";
 import { runOnBackend, runAsyncOnBackendWithManualTransactionHandling, activateNote } from "trilium:api";
 
 /* ── CONSTANTS — kinds, colors, dimensions ─────────────────────── */
 
 const KINDS = {
-    TODO: { label: 'TODO', color: '#ed7a2a' },
-    IDEA: { label: 'IDEA', color: '#348cbb' },
-    CHECK: { label: 'CHECK', color: '#42ae2e' },
+    TODO:   { label: 'TODO',   color: '#ed7a2a' },
+    IDEA:   { label: 'IDEA',   color: '#348cbb' },
+    CHECK:  { label: 'CHECK',  color: '#42ae2e' },
     TOREAD: { label: 'TOREAD', color: '#9d4edd' },
-    DEFER: { label: 'DEFER', color: '#589393' },
+    DEFER:  { label: 'DEFER',  color: '#589393' },
+    EMAIL:  { label: 'EMAIL',  color: '#c0392b' },
 };
 const KIND_KEYS = Object.keys(KINDS);
 const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
 
+/* Trilium attribute labels that promote a note itself into a task.
+   The note title becomes the task text; no inline line is involved. */
+const ATTRIBUTE_TASK_LABELS = ['todo', 'email'];
+
+/* CSS named colors we accept for a bare-word override. The browser knows many
+   more, but an allowlist is safer than `^[a-z]+$` (which would pass arbitrary
+   identifiers) and covers every keyword anyone realistically themes with. */
+const CSS_NAMED_COLORS = new Set([
+    'transparent', 'currentcolor', 'inherit', 'initial', 'unset',
+    'black', 'silver', 'gray', 'grey', 'white', 'maroon', 'red', 'purple',
+    'fuchsia', 'magenta', 'green', 'lime', 'olive', 'yellow', 'navy', 'blue',
+    'teal', 'aqua', 'cyan', 'orange', 'gold', 'pink', 'brown', 'coral',
+    'crimson', 'indigo', 'violet', 'salmon', 'tomato', 'turquoise', 'tan',
+    'beige', 'ivory', 'khaki', 'lavender', 'plum', 'orchid', 'sienna',
+    'chocolate', 'darkred', 'darkgreen', 'darkblue', 'darkgray', 'darkgrey',
+    'lightgray', 'lightgrey', 'lightblue', 'lightgreen', 'slategray',
+    'slategrey', 'steelblue', 'royalblue', 'skyblue', 'seagreen', 'forestgreen',
+    'firebrick', 'goldenrod', 'dodgerblue', 'cornflowerblue', 'mediumblue',
+    'midnightblue', 'rebeccapurple', 'hotpink', 'deeppink', 'limegreen',
+]);
+
 /* Whitelist a label-provided CSS color so a #wp_* override can't break out of
    the CSS value context (no ; { } < > " ' / etc.) and can't smuggle url()/
    expression() for exfiltration. Anything unrecognised falls back to default.
-   Accepts: hex (3/4/6/8), a bare named color, rgb/hsl(a)(...), var(--x[, #hex]). */
+   Accepts: hex (3/4/6/8), an allowlisted named color, rgb/hsl(a)(...),
+   var(--x[, #hex]). */
 function safeCssColor(value, fallback) {
     const s = String(value == null ? '' : value).trim();
     if (/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s)) return s;
-    if (/^[a-zA-Z]+$/.test(s)) return s;                                  // named color
+    if (/^[a-zA-Z]+$/.test(s) && CSS_NAMED_COLORS.has(s.toLowerCase())) return s; // named color
     if (/^(?:rgb|rgba|hsl|hsla)\([0-9.,%/\s]+\)$/.test(s)) return s;
     if (/^var\(\s*--[\w-]+\s*(?:,\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}))?\s*\)$/.test(s)) return s;
     return fallback;
@@ -254,11 +277,12 @@ async function loadPlannerData() {
 
         // Per-kind color overrides:
         const kindLabelMap = {
-            TODO: 'wp_todo',
-            IDEA: 'wp_idea',
-            CHECK: 'wp_check',
+            TODO:   'wp_todo',
+            IDEA:   'wp_idea',
+            CHECK:  'wp_check',
             TOREAD: 'wp_toread',
-            DEFER: 'wp_defer',
+            DEFER:  'wp_defer',
+            EMAIL:  'wp_email',
         };
         const colorOverrides = {};
         for (const kind in kindLabelMap) {
@@ -599,6 +623,135 @@ async function fetchTasksForNote(noteId, { scanArchived = SCAN_ARCHIVED_DEFAULT 
     return flattenGroups(groups);
 }
 
+/* Find notes tagged with any label in ATTRIBUTE_TASK_LABELS (#todo, #email, …).
+   Each matching note yields exactly one task whose text is the note title.
+   Uses api.getNotesWithLabel — the official high-level API — instead of raw
+   SQL, so there is no manual quoting, no subtree-expansion duplication, and
+   adding a new label to ATTRIBUTE_TASK_LABELS requires no other changes.
+   `isAttributeTask` is set so callers skip the inline line-rewrite path. */
+async function fetchAttributeTasks({
+    scanArchived = SCAN_ARCHIVED_DEFAULT,
+    config = DEFAULT_PLANNER_CONFIG,
+    systemNoteIds = [],
+} = {}) {
+    const cfgMode = config.mode === 'include' ? 'include' : 'exclude';
+    const cfgSubtreeRoots = (config.subtrees || []).map(s => s.noteId).filter(Boolean);
+    const attrLabels = ATTRIBUTE_TASK_LABELS;
+
+    /* runOnBackend callback must be self-contained (no closure over helpers).
+       For each label we call api.getNotesWithLabel which handles deleted/
+       protected filtering internally, then apply our own filters in JS:
+         - skip value='done'  (completed attribute tasks)
+         - skip archived      (unless scanArchived)
+         - skip infrastructure notes (this JSX note, state, config)
+         - apply include/exclude scope from #plannerConfig
+       De-duplicate by noteId so a note tagged with both #todo and #email
+       appears only once (first matching label wins). */
+    const rows = await runOnBackend((
+        labels, includeArchived,
+        mode, subtreeRoots, sysNoteIds
+    ) => {
+        function sqlList(arr) {
+            return arr.map(v => "'" + String(v).replace(/'/g, "''") + "'").join(',');
+        }
+
+        /* BFS subtree expansion — reused from fetchAllTasks. */
+        function expandSubtrees(rootIds) {
+            const expanded = new Set();
+            if (!rootIds || !rootIds.length) return expanded;
+            let frontier = rootIds.filter(Boolean);
+            for (const id of frontier) expanded.add(id);
+            for (let depth = 0; depth < 50 && frontier.length; depth++) {
+                const children = api.sql.getRows(
+                    `SELECT DISTINCT noteId FROM branches
+                     WHERE parentNoteId IN (${sqlList(frontier)}) AND isDeleted = 0`
+                );
+                const next = [];
+                for (const r of children) {
+                    if (!expanded.has(r.noteId)) { expanded.add(r.noteId); next.push(r.noteId); }
+                }
+                frontier = next;
+            }
+            return expanded;
+        }
+
+        const scopeSet = expandSubtrees(subtreeRoots);
+        const sysSet   = new Set(sysNoteIds || []);
+
+        const inScope = (noteId) => {
+            if (sysSet.has(noteId)) return false;
+            if (!scopeSet.size) return true;                  // no subtree filter
+            return mode === 'include' ? scopeSet.has(noteId) : !scopeSet.has(noteId);
+        };
+
+        const seen   = new Set();
+        const result = [];
+
+        for (const label of labels) {
+            /* api.getNotesWithLabel returns BNote objects for all non-deleted,
+               non-protected notes carrying this label at any value. */
+            const notes = api.getNotesWithLabel(label);
+            for (const note of notes) {
+                if (seen.has(note.noteId)) continue;
+                /* Skip completed tasks — label value set to 'done' by markAttributeTaskDone. */
+                if (note.getLabelValue(label) === 'done') continue;
+                if (!includeArchived && note.hasLabel('archived')) continue;
+                if (!inScope(note.noteId)) continue;
+                seen.add(note.noteId);
+                result.push({
+                    noteId:    note.noteId,
+                    title:     note.title || '(no title)',
+                    attrLabel: label,
+                    attrValue: note.getLabelValue(label) || null,
+                });
+            }
+        }
+        return result;
+    }, [attrLabels, scanArchived, cfgMode, cfgSubtreeRoots, systemNoteIds]);
+
+    /* Map label name → planner kind: 'todo' → 'TODO', anything else → 'TODO'. */
+    const labelToKind = (label) => {
+        const up = label.toUpperCase();
+        return KINDS[up] ? up : 'TODO';
+    };
+
+    /* Parse a recurrence interval from the label value (#todo=1w, #email=3d).
+       The value is just the bare interval token without the ~ prefix used by
+       inline tasks, so we normalise it by prepending ~ before parsing. */
+    const parseAttrInterval = (value) => {
+        if (!value || value === 'done') return null;
+        return parseInterval(`~${value}`);
+    };
+
+    return rows.map(r => {
+        const kind     = labelToKind(r.attrLabel);
+        const text     = r.title;
+        const meta     = parseTaskMeta(text);
+        const interval = parseAttrInterval(r.attrValue);
+        // Strip the interval value from the id slug so changing the cadence
+        // (e.g. #todo=1w → #todo=2w) doesn't re-key the task and orphan its schedule.
+        const idText = text
+            .trim()
+            .replace(/\s+/g, '_')
+            .slice(0, 48);
+        /* Distinct id prefix prevents collision with inline-task ids from the same note. */
+        const id = `${r.noteId}::ATTR::${r.attrLabel}::${idText}`;
+        return {
+            id,
+            kind,
+            text,
+            tags:          meta.tags,
+            isoDate:       meta.isoDate,
+            interval,
+            indexForKind:  0,          // not used for attribute tasks
+            noteId:        r.noteId,
+            noteTitle:     r.title,
+            isAttributeTask: true,
+            attrLabel:     r.attrLabel,
+        };
+    });
+}
+
 /* For state compaction: the set of note ids we could fully read (non-deleted,
    non-protected text notes) and the set of all note ids that still exist.
    Together with a full task scan, these let us prune only TRUE orphans —
@@ -650,28 +803,99 @@ function flattenGroups(groups) {
 }
 
 /* Mark done: wrap the line in a grey span and replace prefix with DONE.
-   Replaces the Nth occurrence of `<kind> <body>` (up to a line/block boundary)
-   with `<span style="color:#cfcfcf">DONE <body></span>`. */
-async function markTaskDone(task, doneTextColor) {
-    await runOnBackend((noteId, kind, indexForKind, doneColor) => {
+   Replaces the `<kind> <body>` occurrence (up to a line/block boundary) with
+   `<span style="color:#cfcfcf">DONE <body></span>`.
+
+   Targeting is index + content verified to survive edits between scan and
+   click: we prefer the match whose running kind-index equals indexForKind AND
+   whose cleaned body equals the body the user saw. If that exact pair isn't
+   found (note shifted), we fall back to the first match whose cleaned body
+   matches, and only as a last resort to the positional index. This prevents
+   silently marking the wrong line when content changed underneath us.
+   Returns { ok, matched } so the caller can surface a stale-state warning. */
+async function markTaskDone(task, doneTextColor, expectedText) {
+    return await runAsyncOnBackendWithManualTransactionHandling(async (noteId, kind, indexForKind, doneColor, wantText) => {
         const note = api.getNote(noteId);
-        if (!note) return;
+        if (!note) return { ok: false, matched: false };
         let content = note.getContent();
-        let count = 0;
+
+        const cleanText = s => s
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/\s+/g, ' ')
+            .trim();
 
         // Capture: leading boundary, leading whitespace, body (greedy until block-end)
         const re = new RegExp(
             `((?:^|>|<br\\s*/?>))(\\s*)${kind}\\s+([\\s\\S]*?)(?=</(?:p|li|div|h[1-6])>|<br\\s*/?>|$)`,
             'g'
         );
-        content = content.replace(re, (match, boundary, ws, body) => {
-            if (count++ === indexForKind) {
-                return `${boundary}${ws}<span style="color:${doneColor}">DONE ${body}</span>`;
-            }
-            return match;
-        });
-        note.setContent(content);
-    }, [task.noteId, task.kind, task.indexForKind, doneTextColor]);
+
+        // First pass: collect every candidate so we can choose deliberately
+        // rather than rewriting blindly on the first index hit.
+        const matches = [];
+        let m;
+        re.lastIndex = 0;
+        let kindCount = 0;
+        while ((m = re.exec(content)) !== null) {
+            matches.push({
+                start: m.index,
+                full: m[0],
+                boundary: m[1],
+                ws: m[2],
+                body: m[3],
+                cleaned: cleanText(m[3]),
+                kindIndex: kindCount++,
+            });
+        }
+        if (!matches.length) return { ok: false, matched: false };
+
+        // Choose target: (1) exact index+text, (2) first text match, (3) index.
+        const wanted = wantText == null ? null : String(wantText);
+        let target = null;
+        if (wanted != null) {
+            target = matches.find(x => x.kindIndex === indexForKind && x.cleaned === wanted)
+                  || matches.find(x => x.cleaned === wanted);
+        }
+        if (!target) target = matches.find(x => x.kindIndex === indexForKind) || null;
+        if (!target) return { ok: false, matched: false };
+
+        // Rewrite exactly the chosen occurrence by its byte offset, so other
+        // identical lines are untouched.
+        const before = content.slice(0, target.start);
+        const after = content.slice(target.start + target.full.length);
+        const rewritten = `${target.boundary}${target.ws}<span style="color:${doneColor}">DONE ${target.body}</span>`;
+        note.setContent(before + rewritten + after);
+        await note.save();   // explicit persist
+
+        // matched=false flags that we fell back off the expected index/text,
+        // i.e. the note had shifted — the caller does a full reload to resync.
+        const exact = wanted != null
+            && target.kindIndex === indexForKind
+            && target.cleaned === wanted;
+        return { ok: true, matched: exact };
+    }, [task.noteId, task.kind, task.indexForKind, doneTextColor, expectedText]);
+}
+
+/* Mark an attribute task done by setting its label value to 'done'
+   (e.g. #todo -> #todo=done, #email -> #email=done).
+   The label stays on the note so it remains findable; the scan query
+   excludes value='done' so it no longer appears as an open task. */
+async function markAttributeTaskDone(task) {
+    await runAsyncOnBackendWithManualTransactionHandling(
+        async (noteId, attrLabel) => {
+            const note = api.getNote(noteId);
+            if (!note) return;
+            await note.setLabel(attrLabel, 'done');
+            await note.save();
+        },
+        [task.noteId, task.attrLabel]
+    );
 }
 
 /* Escape text destined for note HTML so typed markup (e.g. "a < b", an <img>
@@ -696,11 +920,12 @@ async function appendTodoToToday(text) {
     const body = m ? m[2] : text;
     const lineText = escapeHtml(`${kind} ${body}`);
 
-    return await runOnBackend((line) => {
+    return await runAsyncOnBackendWithManualTransactionHandling(async (line) => {
         const note = api.getTodayNote();
         if (!note) throw new Error("Couldn't get or create today's daily note");
         const current = note.getContent() || '';
         note.setContent(current + `<p>${line}</p>`);
+        await note.save();   // explicit — don't rely on setContent auto-persisting
         return { noteId: note.noteId, title: note.title };
     }, [lineText]);
 }
@@ -737,8 +962,11 @@ function getWeekCols(offset) {
 function weekLabel(cols) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     if (!cols || !cols.length) return '';
-    const d0 = new Date(cols[0].key + 'T12:00:00');
-    const d1 = new Date(cols[cols.length - 1].key + 'T12:00:00');
+    // Use the shared isoToLocalDate parser (numeric constructor, no UTC shift)
+    // so every ISO-string parse in the file goes through one code path.
+    const d0 = isoToLocalDate(cols[0].key);
+    const d1 = isoToLocalDate(cols[cols.length - 1].key);
+    if (!d0 || !d1) return '';
     if (cols.length === 1) {
         return `${cols[0].label} ${d0.getDate()} ${months[d0.getMonth()]} ${d0.getFullYear()}`;
     }
@@ -807,8 +1035,8 @@ const VIEW_MODES = {
 function formatOverdueDate(iso) {
     if (!iso || typeof iso !== 'string') return '';
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const d = new Date(iso + 'T12:00:00');
-    if (isNaN(d.getTime())) return iso;
+    const d = isoToLocalDate(iso);
+    if (!d) return iso;
     const day = d.getDate();
     const mon = months[d.getMonth()];
     const yr = d.getFullYear();
@@ -860,15 +1088,15 @@ function getBacklog(allTasks, plannerData, todayIso) {
 }
 
 /* Stable sort by an explicit id order; ids absent from `order` keep their
-   original relative position at the end. O(n) index build, no indexOf scan. */
+   original relative position at the end. O(n) index build, no indexOf scan.
+   Sorts a copy so the caller's array is never mutated. */
 function sortByOrder(tasks, order) {
     const pos = new Map(order.map((id, i) => [id, i]));
-    tasks.sort((a, b) => {
+    return tasks.slice().sort((a, b) => {
         const ai = pos.has(a.id) ? pos.get(a.id) : Infinity;
         const bi = pos.has(b.id) ? pos.get(b.id) : Infinity;
         return ai === bi ? 0 : ai - bi;
     });
-    return tasks;
 }
 
 function getOrderedBacklog(allTasks, plannerData, todayIso) {
@@ -892,8 +1120,11 @@ function withOrderUpdate(plannerData, col, taskId, insertBeforeId, allTasks, tod
 
     let order = (next._order[col] || currentIds).slice();
     order = order.filter(id => id !== taskId);
-    if (insertBeforeId) {
-        const idx = order.indexOf(insertBeforeId);
+    // Ignore a self-targeting insert (card dropped onto itself): after the
+    // filter above the anchor is gone, so we'd append — a needless reorder.
+    const anchor = insertBeforeId === taskId ? null : insertBeforeId;
+    if (anchor) {
+        const idx = order.indexOf(anchor);
         order.splice(idx !== -1 ? idx : order.length, 0, taskId);
     } else {
         order.push(taskId);
@@ -998,6 +1229,7 @@ function buildStyle(theme) {
 .pl-task[draggable="true"] { cursor:grab; }
 .pl-task-note { font-size:12px; color:${theme.textMuted}; margin-top:3px;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pl-task-note-attr { font-style:italic; opacity:.6; }
 .pl-task-kind { display:inline-block; font-size:10px; font-weight:700;
                 padding:1px 5px; border-radius:3px; margin-right:5px;
                 vertical-align:middle; letter-spacing:.05em; color:#fff; }
@@ -1446,7 +1678,10 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onContextMenu
                 )}
                 {renderTaskText(task.text)}
             </div>
-            <div class="pl-task-note">{task.noteTitle}</div>
+            {task.isAttributeTask
+                ? <div class="pl-task-note pl-task-note-attr">📌 note</div>
+                : <div class="pl-task-note">{task.noteTitle}</div>
+            }
             <div
                 class="pl-task-progress"
                 title={`Progress: ${pct}% — click to advance`}
@@ -1489,10 +1724,12 @@ function Column({
                 onDrop={onDrop}
             >
                 {tasks.map(t => (
-                    <>
+                    // Key belongs on the outermost mapped node (the fragment), not
+                    // the inner card — otherwise Preact can't keep the optional
+                    // insert-marker sibling aligned with its card during reorders.
+                    <Fragment key={t.id}>
                         {insertMarkerBeforeId === t.id ? <div class="pl-insert-marker" /> : null}
                         <TaskCard
-                            key={t.id}
                             task={t}
                             progress={progressMap ? progressMap[t.id] : 0}
                             overrides={overrides}
@@ -1505,7 +1742,7 @@ function Column({
                             onDragStart={(e) => onCardDragStart(t, e)}
                             onDragEnd={onCardDragEnd}
                         />
-                    </>
+                    </Fragment>
                 ))}
                 {insertMarkerBeforeId === '__end__' ? <div class="pl-insert-marker" /> : null}
                 <div class="pl-drop" />
@@ -1794,6 +2031,10 @@ function ConfigPanel({ config, onChange }) {
 function PlannerApp() {
     const [allTasks, setAllTasks] = useState([]);
     const [plannerData, setPlannerData] = useState({});
+    // Mirror of allTasks for use inside setPlannerData(prev => …) updaters.
+    // withOrderUpdate seeds column order from the task list; reading it from a
+    // ref guarantees the latest tasks rather than a possibly-stale closure.
+    const allTasksRef = useRef([]);
     const [weekOffset, setWeekOffset] = useState(0);
     const [dayOffset, setDayOffset] = useState(0);
     const [viewMode, setViewMode] = useState(VIEW_MODES.WEEK);
@@ -1824,6 +2065,7 @@ function PlannerApp() {
     const [filters, setFilters] = useState({ kinds: new Set(), tags: new Set(), tagMode: 'AND' });
 
     const dragState = useRef({ id: null, insertBeforeId: null, dragMoved: false });
+    const contextMenuRef = useRef(null);
     const [insertMarker, setInsertMarker] = useState({ col: null, beforeId: null });
     const [isResizing, setIsResizing] = useState(false);
 
@@ -1832,6 +2074,9 @@ function PlannerApp() {
 
     // Inject CSS whenever the resolved theme changes (and once on mount).
     useEffect(() => { injectStyle(buildStyle(theme)); }, [theme]);
+
+    // Keep the ref aligned with state for use inside functional updaters.
+    useEffect(() => { allTasksRef.current = allTasks; }, [allTasks]);
 
     /* Schedule a fetched task per its @date suffix if not already planned.
        Returns updated plannerData or the same reference if no changes. */
@@ -1906,11 +2151,16 @@ function PlannerApp() {
 
                 let tasks = [];
                 if (!includeEmpty) {
-                    tasks = await fetchAllTasks({
+                    const opts = {
                         scanArchived: loaded.scanArchived !== false,
                         config: loadedCfg,
                         systemNoteIds: [...new Set(sysIds)],
-                    });
+                    };
+                    const [inlineTasks, attrTasks] = await Promise.all([
+                        fetchAllTasks(opts),
+                        fetchAttributeTasks(opts),
+                    ]);
+                    tasks = [...inlineTasks, ...attrTasks];
                 }
                 setAllTasks(tasks);
                 setPlannerData(applyDateSuffixes(tasks, data));
@@ -1980,7 +2230,11 @@ function PlannerApp() {
                 setAllTasks([]);   // nothing to scan; preserve JSON state
                 return;
             }
-            const tasks = await fetchAllTasks({ scanArchived, config, systemNoteIds });
+            const [inlineTasks, attrTasks] = await Promise.all([
+                fetchAllTasks({ scanArchived, config, systemNoteIds }),
+                fetchAttributeTasks({ scanArchived, config, systemNoteIds }),
+            ]);
+            const tasks = [...inlineTasks, ...attrTasks];
             setAllTasks(tasks);
             setPlannerData(prev => applyDateSuffixes(tasks, prev));
         } catch (err) {
@@ -2060,7 +2314,7 @@ function PlannerApp() {
                     };
                 }
                 next[task.id] = newDate;                       // advance + relocate
-                next = withOrderUpdate(next, newDate, task.id, null, allTasks);
+                next = withOrderUpdate(next, newDate, task.id, null, allTasksRef.current);
                 if (next._progress && task.id in next._progress) {  // fresh cycle
                     const nextProgress = { ...next._progress };
                     delete nextProgress[task.id];
@@ -2071,7 +2325,7 @@ function PlannerApp() {
             return;
         }
 
-        // One-off: remove optimistically, then write DONE and re-scan the note.
+        // One-off: remove optimistically from the board, then persist.
         setAllTasks(prev => prev.filter(t => t.id !== task.id));
         setPlannerData(prev => {
             const next = { ...prev };
@@ -2092,15 +2346,30 @@ function PlannerApp() {
         });
 
         try {
-            await markTaskDone(task, theme.colorDoneText);
-            // Re-scan only the source note to refresh its task indices.
-            await reloadNote(task.noteId);
+            if (task.isAttributeTask) {
+                // Set #<label>=done on the note (e.g. #todo=done, #email=done).
+                // No inline rewrite or rescan needed — the label change is the
+                // only thing that happens, and the task is already off the board.
+                await markAttributeTaskDone(task);
+            } else {
+                // Inline task: rewrite the source line, then rescan the note to
+                // refresh its per-kind indices. We pass the raw text so the
+                // backend can verify it's rewriting the line the user saw; if it
+                // had to fall back (note edited underneath us) we do a full
+                // reload to resync every index rather than trust the single note.
+                const res = await markTaskDone(task, theme.colorDoneText, task.text);
+                if (res && res.matched === false) {
+                    await reload();
+                } else {
+                    await reloadNote(task.noteId);
+                }
+            }
         } catch (err) {
             console.error('markDone:', err);
             alert(`Mark done failed: ${err.message || err}`);
             await reload();
         }
-    }, [reload, reloadNote, theme, allTasks]);
+    }, [reload, reloadNote, theme]);
 
     /* Dismiss an overdue badge: clear the stored schedule so the task drops
        back to the backlog as unscheduled. */
@@ -2155,6 +2424,7 @@ function PlannerApp() {
     const onCardDragStart = useCallback((task, e) => {
         dragState.current.id = task.id;
         dragState.current.dragMoved = true;
+        dragState.current.dragEndedAt = 0;   // not ended yet
         e.dataTransfer.effectAllowed = 'move';
         setTimeout(() => {
             const el = e.target.closest('.pl-task');
@@ -2168,7 +2438,22 @@ function PlannerApp() {
         setInsertMarker({ col: null, beforeId: null });
         dragState.current.id = null;
         dragState.current.insertBeforeId = null;
-        setTimeout(() => { dragState.current.dragMoved = false; }, 50);
+        // Record when the drag ended instead of clearing a flag on a fixed
+        // timer. The synthetic click that some browsers fire right after a
+        // drop arrives within a few ms; onCardClick/openCardContextMenu suppress
+        // only within that tight window, so a real click a moment later is never
+        // swallowed and a phantom open can't slip through on a slow device.
+        dragState.current.dragMoved = true;
+        dragState.current.dragEndedAt = Date.now();
+    }, []);
+
+    // True only for the synthetic click immediately following a drop.
+    const justDragged = useCallback(() => {
+        if (!dragState.current.dragMoved) return false;
+        const since = Date.now() - (dragState.current.dragEndedAt || 0);
+        if (since <= 120) return true;   // within the post-drop click window
+        dragState.current.dragMoved = false;  // window passed — it was a real click
+        return false;
     }, []);
 
     const onZoneDragOver = useCallback((col, e) => {
@@ -2219,7 +2504,7 @@ function PlannerApp() {
                 const insertBefore = dragState.current.insertBeforeId === '__end__'
                     ? null
                     : dragState.current.insertBeforeId;
-                next = withOrderUpdate(next, 'backlog', id, insertBefore, allTasks, toLocalIsoDate(todayBase()));
+                next = withOrderUpdate(next, 'backlog', id, insertBefore, allTasksRef.current, toLocalIsoDate(todayBase()));
             } else {
                 const oldDay = next[id];
                 if (oldDay && oldDay !== col && next._order && next._order[oldDay]) {
@@ -2232,12 +2517,12 @@ function PlannerApp() {
                 const insertBefore = dragState.current.insertBeforeId === '__end__'
                     ? null
                     : dragState.current.insertBeforeId;
-                next = withOrderUpdate(next, col, id, insertBefore, allTasks);
+                next = withOrderUpdate(next, col, id, insertBefore, allTasksRef.current);
             }
             return next;
         });
         setInsertMarker({ col: null, beforeId: null });
-    }, [allTasks]);
+    }, []);
 
     /* Resize */
     const backlogWidthRef = useRef(backlogWidth);
@@ -2287,28 +2572,48 @@ function PlannerApp() {
 
             if (!targetIso) {
                 delete next[task.id];
-                next = withOrderUpdate(next, 'backlog', task.id, null, allTasks, toLocalIsoDate(todayBase()));
+                next = withOrderUpdate(next, 'backlog', task.id, null, allTasksRef.current, toLocalIsoDate(todayBase()));
             } else {
                 next[task.id] = targetIso;
-                next = withOrderUpdate(next, targetIso, task.id, null, allTasks);
+                next = withOrderUpdate(next, targetIso, task.id, null, allTasksRef.current);
             }
             return next;
         });
 
         setContextMenu(null);
         if (targetIso) jumpToScheduledDate(targetIso);
-    }, [allTasks, jumpToScheduledDate]);
+    }, [jumpToScheduledDate]);
 
     const openCardContextMenu = useCallback((task, e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (dragState.current.dragMoved) return;
-        const menuWidth = 210;
-        const menuHeight = 235;
-        const x = Math.min(e.clientX, Math.max(8, window.innerWidth - menuWidth - 8));
-        const y = Math.min(e.clientY, Math.max(8, window.innerHeight - menuHeight - 8));
-        setContextMenu({ task, x, y });
-    }, []);
+        if (justDragged()) return;
+        // Rough first-paint estimate keeps the menu near the cursor and on-screen
+        // before it's measured; the effect below corrects it from the menu's
+        // actual rendered size, so these numbers don't have to track its content.
+        const EST_W = 210, EST_H = 235;
+        const x = Math.min(e.clientX, Math.max(8, window.innerWidth - EST_W - 8));
+        const y = Math.min(e.clientY, Math.max(8, window.innerHeight - EST_H - 8));
+        // Keep the raw point so the corrective effect can re-clamp from it.
+        setContextMenu({ task, x, y, rawX: e.clientX, rawY: e.clientY });
+    }, [justDragged]);
+
+    // After the menu renders, measure it and re-clamp within the viewport so the
+    // position is correct regardless of how many items / how long the labels are.
+    useEffect(() => {
+        if (!contextMenu || !contextMenuRef.current) return;
+        const rect = contextMenuRef.current.getBoundingClientRect();
+        const rawX = contextMenu.rawX != null ? contextMenu.rawX : contextMenu.x;
+        const rawY = contextMenu.rawY != null ? contextMenu.rawY : contextMenu.y;
+        const x = Math.min(rawX, Math.max(8, window.innerWidth - rect.width - 8));
+        const y = Math.min(rawY, Math.max(8, window.innerHeight - rect.height - 8));
+        if (Math.abs(x - contextMenu.x) > 1 || Math.abs(y - contextMenu.y) > 1) {
+            setContextMenu(prev => (prev ? { ...prev, x, y } : prev));
+        }
+        // Re-run only when a new menu opens (task/raw point changes), not on the
+        // self-correcting x/y update — guard above prevents an update loop anyway.
+        // eslint-disable-next-line
+    }, [contextMenu && contextMenu.task, contextMenu && contextMenu.rawX, contextMenu && contextMenu.rawY]);
 
     useEffect(() => {
         if (!contextMenu) return;
@@ -2328,7 +2633,7 @@ function PlannerApp() {
        Ctrl/Cmd/Shift/middle-click. Falls back to activateNote. */
     const onCardClick = useCallback((task, e) => {
         if (e && (e.defaultPrevented || (e.button !== 0 && e.button !== 1))) return;
-        if (dragState.current.dragMoved) return;
+        if (justDragged()) return;
         const wantsNewTab = e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1);
         try {
             if (wantsNewTab) {
@@ -2340,7 +2645,7 @@ function PlannerApp() {
             console.error('open failed, falling back:', err);
             activateNote(task.noteId);
         }
-    }, []);
+    }, [justDragged]);
 
     const requestClearVisible = useCallback((e, visibleKeys, scopeLabel) => {
         if (e) {
@@ -2376,10 +2681,13 @@ function PlannerApp() {
     const requestCompact = useCallback(async () => {
         setCompacting(true);
         try {
-            const [liveTasks, sets] = await Promise.all([
-                fetchAllTasks({ scanArchived: true, config: { mode: 'exclude', subtrees: [] }, systemNoteIds }),
+            const compactOpts = { scanArchived: true, config: { mode: 'exclude', subtrees: [] }, systemNoteIds };
+            const [inlineTasks, attrTasks, sets] = await Promise.all([
+                fetchAllTasks(compactOpts),
+                fetchAttributeTasks(compactOpts),
                 fetchNoteIdSets(),
             ]);
+            const liveTasks = [...inlineTasks, ...attrTasks];
             const { data, removed } = compactPlannerData(plannerData, {
                 liveIds: new Set(liveTasks.map(t => t.id)),
                 readableNoteIds: sets.readableNoteIds,
@@ -2551,6 +2859,7 @@ function PlannerApp() {
             {contextMenu && (
                 <div
                     class="pl-context-menu"
+                    ref={contextMenuRef}
                     style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
