@@ -51,7 +51,9 @@ function sumCell(cell) {
 function normalizeData(d) {
     const obj = (d && typeof d === "object") ? d : {};
     return {
-        projects: Array.isArray(obj.projects) ? obj.projects : [],
+        projects: Array.isArray(obj.projects)
+            ? obj.projects.map(p => ({ startWeek: "", endWeek: "", ...p }))
+            : [],
         weeks: (obj.weeks && typeof obj.weeks === "object" && !Array.isArray(obj.weeks))
             ? obj.weeks
             : {},
@@ -157,6 +159,47 @@ function currentWeekKey() {
 }
 
 /**
+ * The Monday (00:00) of a given ISO year + week number.
+ */
+function isoWeekStartDate(year, week) {
+    // Jan 4th is always in ISO week 1.
+    const jan4 = new Date(year, 0, 4);
+    const jan4Day = jan4.getDay() || 7; // Mon=1..Sun=7
+    const week1Monday = new Date(jan4);
+    week1Monday.setDate(jan4.getDate() - (jan4Day - 1));
+    const monday = new Date(week1Monday);
+    monday.setDate(week1Monday.getDate() + (week - 1) * 7);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+}
+
+/**
+ * Parse a "YYYY-Www" key into { year, week } (or null if malformed).
+ */
+function parseWeekKey(key) {
+    const m = /^(\d{4})-W(\d{1,2})$/.exec((key || "").trim());
+    if (!m) return null;
+    return { year: parseInt(m[1], 10), week: parseInt(m[2], 10) };
+}
+
+/**
+ * Number of calendar weeks remaining from "now" up to and including the end
+ * week. Returns null if endKey is missing/malformed. Never negative.
+ * The current (in-progress) week counts as 1 week left.
+ */
+function calendarWeeksLeft(endKey, now = new Date()) {
+    const end = parseWeekKey(endKey);
+    if (!end) return null;
+    const endMonday = isoWeekStartDate(end.year, end.week);
+    const cur = new Date(now);
+    cur.setHours(0, 0, 0, 0);
+    const curMonday = new Date(cur);
+    curMonday.setDate(cur.getDate() - ((cur.getDay() || 7) - 1));
+    const diffWeeks = Math.round((endMonday - curMonday) / (7 * 86400000));
+    return Math.max(0, diffWeeks + 1);
+}
+
+/**
  * Calculate statistics per project.
  *
  * "Elapsed" weeks are driven by the weeks the user has actually entered data
@@ -165,7 +208,7 @@ function currentWeekKey() {
  * the schedule, and remaining weeks = totalWeeks - weeksEntered.
  */
 function calcProjectStats(project, weeks) {
-    const { id, totalHours, totalWeeks } = project;
+    const { id, totalHours, totalWeeks, endWeek } = project;
 
     // Planned hours/week is derived, not stored: the budget spread evenly over
     // the planned (working) weeks.
@@ -192,13 +235,23 @@ function calcProjectStats(project, weeks) {
     // Difference: positive = ahead of schedule, negative = behind
     const delta = madeHours - plannedSoFar;
 
-    // Remaining working weeks
-    const remainingWeeks = Math.max(0, totalWeeks - effectivePassed);
+    // Remaining working weeks that are still "unspent" in the plan.
+    const unspentWeeks = Math.max(0, totalWeeks - effectivePassed);
+
+    // Calendar weeks physically left until the end week (null if no end set).
+    const calLeft = calendarWeeksLeft(endWeek);
+
+    // The number of weeks the remaining budget must actually be spread over:
+    // if the deadline arrives before the plan's unspent weeks run out, the
+    // budget has to fit into the fewer real weeks that remain.
+    const remainingWeeks = calLeft === null
+        ? unspentWeeks
+        : Math.min(unspentWeeks, calLeft);
 
     // Remaining hours (total budget minus worked)
     const remainingHours = Math.max(0, totalHours - madeHours);
 
-    // Required hours/week for the remaining working weeks
+    // Required hours/week for the remaining weeks
     const neededPerWeek = remainingWeeks > 0
         ? remainingHours / remainingWeeks
         : 0;
@@ -212,6 +265,8 @@ function calcProjectStats(project, weeks) {
         plannedSoFar,
         delta,
         remainingWeeks,
+        unspentWeeks,
+        calendarWeeksLeft: calLeft,
         remainingHours,
         neededPerWeek,
         pct,
@@ -242,7 +297,8 @@ function ProgressBar({ pct }) {
 
 function ProjectCard({ project, stats, onEdit, onDelete }) {
     const { name, totalHours, totalWeeks } = project;
-    const { madeHours, delta, remainingWeeks, remainingHours, neededPerWeek, plannedPerWeek, pct } = stats;
+    const { madeHours, delta, remainingWeeks, unspentWeeks, calendarWeeksLeft: calLeft, remainingHours, neededPerWeek, plannedPerWeek, pct } = stats;
+    const deadlineCapped = calLeft !== null && calLeft < unspentWeeks;
 
     return (
         <div style={styles.card}>
@@ -262,7 +318,7 @@ function ProjectCard({ project, stats, onEdit, onDelete }) {
                 <StatCell label="Remaining budget" value={`${remainingHours.toFixed(1)}h`} highlight={remainingHours < 0} />
                 <StatCell label="Planned/week" value={`${plannedPerWeek.toFixed(1)}h`} />
                 <StatCell label="Needed/week" value={`${neededPerWeek.toFixed(1)}h`} highlight={neededPerWeek > plannedPerWeek * 1.2} />
-                <StatCell label="Weeks left" value={`${remainingWeeks}`} />
+                <StatCell label={deadlineCapped ? "Weeks left (deadline)" : "Weeks left"} value={`${remainingWeeks}`} highlight={deadlineCapped} />
             </div>
 
             <div style={styles.metaRow}>
@@ -348,7 +404,7 @@ function WeekEntry({ weekKey, cell, onSave, onClear }) {
 }
 
 function ProjectForm({ initial, onSave, onCancel }) {
-    const blank = { name: "", totalHours: "", totalWeeks: "" };
+    const blank = { name: "", totalHours: "", totalWeeks: "", startWeek: "", endWeek: "" };
     const [form, setForm] = useState(initial || blank);
     const [error, setError] = useState("");
 
@@ -367,12 +423,23 @@ function ProjectForm({ initial, onSave, onCancel }) {
         const weeks = parseInt(form.totalWeeks);
         if (isNaN(total) || total <= 0) return setError("Total hours must be > 0");
         if (isNaN(weeks) || weeks <= 0) return setError("Number of weeks must be > 0");
+        const startWeek = form.startWeek.trim();
+        const endWeek = form.endWeek.trim();
+        if (startWeek && !parseWeekKey(startWeek)) return setError("Start week must look like 2025-W22");
+        if (endWeek && !parseWeekKey(endWeek)) return setError("End week must look like 2025-W47");
+        if (startWeek && endWeek) {
+            const s = isoWeekStartDate(parseWeekKey(startWeek).year, parseWeekKey(startWeek).week);
+            const e = isoWeekStartDate(parseWeekKey(endWeek).year, parseWeekKey(endWeek).week);
+            if (e < s) return setError("End week must not be before start week");
+        }
         setError("");
         onSave({
             id: initial?.id || `proj_${Date.now()}`,
             name: form.name.trim(),
             totalHours: total,
             totalWeeks: weeks,
+            startWeek,
+            endWeek,
         });
     };
 
@@ -389,6 +456,12 @@ function ProjectForm({ initial, onSave, onCancel }) {
 
                 <label style={styles.formLabel}>Total number of (working) weeks</label>
                 <input style={styles.input} type="number" min="1" step="1" value={form.totalWeeks} onChange={e => set("totalWeeks", e.target.value)} placeholder="e.g. 25" />
+
+                <label style={styles.formLabel}>Start week (optional)</label>
+                <input style={styles.input} value={form.startWeek} onChange={e => set("startWeek", e.target.value)} placeholder="e.g. 2025-W22" />
+
+                <label style={styles.formLabel}>End week (optional)</label>
+                <input style={styles.input} value={form.endWeek} onChange={e => set("endWeek", e.target.value)} placeholder="e.g. 2025-W47" />
 
                 <label style={styles.formLabel}>Planned/week</label>
                 <span style={{ ...styles.meta, paddingTop: "5px" }}>

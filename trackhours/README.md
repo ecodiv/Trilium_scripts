@@ -15,6 +15,7 @@
   * [Progress bar](#progress-bar)
   * [Status badges](#status-badges)
   * [Schedule model](#schedule-model)
+  * [Deadline weeks](#deadline-weeks)
 * [Data storage](#data-storage)
   * [Urendata](#urendata)
   * [Data safety](#data-safety)
@@ -34,7 +35,7 @@ Hours Tracker is a project-hours widget for [Trilium Notes](https://triliumnotes
 
 For each project it shows: how many hours you have worked, how many remain, whether you are ahead or behind your planned pace, and how many hours per week you need to put in over the remaining weeks to finish on budget.
 
-The tracker works on the "working weeks" model: you enter hours week by week, and only the weeks where you actually log hours count against your schedule. A holiday or sick week simply goes unlogged and is not counted, so the plan stays realistic without any manual adjustment.
+The tracker works on the "working weeks" model: you enter hours week by week, and only the weeks where you actually log hours count against your schedule. A holiday or sick week simply goes unlogged and is not counted, so the plan stays realistic without any manual adjustment. You can optionally set an end week on a project to cap the remaining weeks by a real calendar deadline.
 
 The tool was created with use of AI, and tested on TriliumNext.
 
@@ -94,7 +95,7 @@ Each **project card** shows:
 | Remaining budget | Budget minus hours worked so far. |
 | Planned/week | Budget ÷ total weeks. The pace you need to keep if all weeks are equal. |
 | Needed/week | Remaining hours ÷ remaining weeks. Highlighted if it is more than 20% above the original planned/week. |
-| Weeks left | Remaining working weeks (total weeks minus weeks with entries). |
+| Weeks left | Remaining working weeks (total weeks minus weeks with entries). Relabels to **Weeks left (deadline)** and highlights in red when the calendar deadline is the binding constraint. |
 
 A thin progress bar below the project name shows the percentage of the total budget that has been worked. The percentage is also shown in the bottom-right corner of the card.
 
@@ -126,7 +127,11 @@ Click **+ New project** to open the project form. Fill in:
 | Name | A display name for the project. Required. |
 | Total available hours | The total hour budget. Must be > 0. |
 | Total number of (working) weeks | How many working weeks the project spans. Must be > 0. |
+| Start week (optional) | The first ISO week of the project, e.g. `2026-W22`. Stored on the project but not used in calculations. |
+| End week (optional) | The last ISO week of the project, e.g. `2026-W47`. When set, caps the remaining weeks by the real calendar deadline. See [Deadline weeks](#deadline-weeks). |
 | Planned/week | Computed automatically: total hours ÷ weeks. Shown as a live preview while you type. |
+
+End week must not be before start week. Both fields accept `YYYY-Www` format only; any other value is rejected on save.
 
 Click **Save** to add or update the project. The planned/week value is always derived; it is never stored separately.
 
@@ -160,6 +165,27 @@ The tracker uses a **working weeks** model rather than a calendar model. A week 
 
 This model is intentionally simple. If a project spans 20 weeks but you take two weeks off, you do not need to adjust the plan. Just keep logging, and the pace will self-correct.
 
+### Deadline weeks
+
+When a project has an **End week** set, the tracker introduces a second constraint on the remaining weeks alongside the working-weeks count:
+
+- **Unspent weeks** — the working-weeks count still unaccounted for in the plan (`totalWeeks − weeksEntered`). This is the existing model.
+- **Calendar weeks left** — real ISO weeks from the current week up to and including the end week. The current (in-progress) week counts as 1.
+
+The remaining weeks used for all calculations is `min(unspentWeeks, calendarWeeksLeft)`. When the calendar deadline arrives before the unspent plan weeks run out, the required hours/week rises to fit the remaining budget into the fewer real weeks left.
+
+The "Weeks left" cell on the project card shows which constraint is active:
+
+| Label | Meaning |
+| --- | --- |
+| **Weeks left** | The unspent working-weeks count is the binding constraint, or no end week is set. |
+| **Weeks left (deadline)** (red) | The calendar deadline is closer than the remaining plan weeks. The required pace is driven by the deadline. |
+
+Projects without an end week behave exactly as before — the deadline logic is inactive unless you set one. Old saved projects load fine and default to no start or end week.
+
+> [!NOTE]
+> Calendar weeks left is calculated from today's date at the moment the tracker loads. It is not recalculated until you reload the widget.
+
 ## Data storage
 
 ### Urendata
@@ -178,7 +204,7 @@ The `#urendata` note's content is a JSON document storing:
 
 | State item | Example |
 | --- | --- |
-| Projects list | `projects: [{ id, name, totalHours, totalWeeks }]` |
+| Projects list | `projects: [{ id, name, totalHours, totalWeeks, startWeek, endWeek }]` |
 | Hours per project per week | `weeks: { "2026-W22": { "proj_123": [2, 3, 1.5] } }` |
 
 A populated file looks roughly like this:
@@ -186,8 +212,10 @@ A populated file looks roughly like this:
 ```
 {
   "projects": [
-    { "id": "proj_1748000000000", "name": "Website redesign", "totalHours": 80, "totalWeeks": 8 },
-    { "id": "proj_1748000000001", "name": "Client report",    "totalHours": 20, "totalWeeks": 4 }
+    { "id": "proj_1748000000000", "name": "Website redesign", "totalHours": 80, "totalWeeks": 8,
+      "startWeek": "2026-W20", "endWeek": "2026-W28" },
+    { "id": "proj_1748000000001", "name": "Client report", "totalHours": 20, "totalWeeks": 4,
+      "startWeek": "", "endWeek": "" }
   ],
   "weeks": {
     "2026-W22": {
@@ -245,7 +273,7 @@ If something is deeply wrong, you can delete the `#urendata` note entirely and l
 | --- | --- |
 | There is no weekly calendar view. | The tracker is project-centric, not date-centric. Use the Entry tab to browse by project. |
 | Week keys must be entered manually. | Type the week in `YYYY-Www` format. The current week is pre-filled; adjust as needed. |
-| The tracker does not know the current date. | The schedule model is based on weeks logged, not on today's date. No overdue warnings are shown. |
+| Calendar weeks left is not live. | It is calculated once when the tracker loads. Reload the widget to refresh it. |
 | Deleting a project does not remove its week entries from the JSON. | These orphan entries are harmless (they never appear on screen) but slowly grow the data note. Reset with the **Ultimate option** if tidiness matters. |
 | There is no real-time sync. | Data is written on every save action. If you have two tracker views open simultaneously, the second save will overwrite the first. |
 | No export. | To extract your data, open the `#urendata` note and copy the JSON content. |
