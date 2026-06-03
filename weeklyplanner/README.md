@@ -11,6 +11,7 @@
 * [Using it](#using-it)
   * [Daily flow](#daily-flow)
   * [How tasks work](#how-tasks-work)
+  * [Note tasks](#note-tasks)
   * [The day card](#the-day-card)
   * [Progress](#progress)
   * [Backlog](#backlog)
@@ -47,7 +48,7 @@ Task Planner is a weekly planner for [Trilium Notes](https://triliumnotes.org/),
 
 Type e.g., `TODO buy milk` anywhere in a daily note, meeting note, or project note. The task appears in the planner. Drag it to a day column to schedule it. Mark it done from the planner, and the original source line is greyed out in place.
 
-The planner supports four task types: `TODO`, `IDEA`, `CHECK`, `DEFER` and `TOREAD`. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
+The planner supports six inline task types: `TODO`, `IDEA`, `CHECK`, `DEFER`, `TOREAD`, and `EMAIL`. It also picks up whole notes tagged with `#todo` or `#email` as note tasks. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
 
 ![](images/overview.png)
 
@@ -115,7 +116,9 @@ One way to use the weekly planner:
 
 ### How tasks work
 
-The planner scans every text note in the whole Trilium database for lines that start with one of four prefixes:
+The planner finds tasks from two sources: **inline task lines** written directly inside note content, and **note tasks** — whole notes tagged with a Trilium label. Both appear on the same board and behave identically for scheduling, filtering, recurring, and progress tracking.
+
+**Inline task lines** — the planner scans every text note for lines that start with one of these prefixes:
 
 | Prefix | Meaning | Default colour |
 | --- | --- | --- |
@@ -124,17 +127,39 @@ The planner scans every text note in the whole Trilium database for lines that s
 | `CHECK` | To verify or review | green |
 | `TOREAD` | Reading queue | purple |
 | `DEFER` | Follow up later | teal |
+| `EMAIL` | Email to write or follow up | red |
 
 Prefixes are case-sensitive and must be followed by a space. They must appear at the start of a paragraph, at the start of a list item, or after a `<br>`. Anything else, such as `My TODO list:` in prose, is ignored.
 
 Archived notes are included in the scan by default. To exclude archived notes, add the label `#wp_scan_archived=false` to the `#plannerdata` note.
+
+### Note tasks
+
+In addition to inline lines, the planner picks up entire notes that carry a `#todo` or `#email` Trilium label. The note's title becomes the task text. These **note tasks** appear on the board exactly like inline tasks, with two differences:
+
+- The bottom of the card shows `📌 note` (in muted italic) instead of the source note title, to indicate that the whole note is the task.
+- Clicking the card still opens the note, so you can read or edit its full content.
+
+**Marking done** sets the label value to `done` (e.g. `#todo=done`, `#email=done`) on the source note. The label stays on the note so it remains searchable, but the task disappears from the board. To reopen a completed note task, change the label value back to anything other than `done`.
+
+**Recurring note tasks** work by setting the label value to an interval instead of leaving it empty:
+
+| Label | Meaning |
+| --- | --- |
+| `#todo=1w` | Repeat every week |
+| `#todo=3d` | Repeat every 3 days |
+| `#email=2w` | Repeat every 2 weeks |
+
+The same recurrence rules apply as for inline tasks: completing (✓) advances the due date to the next future slot, the `↻` mark appears on the kind chip, and dragging reschedules from the dropped date. To stop recurrence, change the label value back to empty or remove it. To mark the note permanently done, set the value to `done`.
+
+Note tasks respect the scope filter (⚙ panel): a note tagged `#todo` that lives in an excluded subtree will not appear on the board.
 
 > [!WARNING]
 > A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task will make the planner treat it as a new task. That means the planned date is lost and the task returns to the backlog column.
 
 ### The day card
 
-Each task is rendered as a small card showing the kind chip in its colour, the task text, the `@date` suffix in light grey if one exists, any `#tags` as grey pills, and the source note title below.
+Each task is rendered as a small card showing the kind chip in its colour, the task text, the `@date` suffix in light grey if one exists, any `#tags` as grey pills, and the source note title below. Note tasks (whole notes tagged `#todo` or `#email`) show `📌 note` in muted italic instead of the source note title.
 
 ![](images/day_card.png)
 
@@ -334,7 +359,7 @@ Compacting is safe to run any time and changes nothing visible on the board; thi
 
 All settings are labels you add to the `#plannerdata` note. They all share the `wp_` prefix to keep them grouped in the attributes pane. These optional labels go on the #plannerdata note and let you tune scanning and tag appearance without touching the code. Each is a Trilium label: add it to #plannerdata (note actions → add label) in the form name=value. All are optional — leave a label off and the planner uses its default. Changes take effect on the next load or rescan.
 
-The first label controls what gets scanned: `#wp_scan_archived` decides whether archived notes are included. Note that which subtrees are scanned is set separately, through the ⚙ scope panel in the planner header, not via a label. `#wp_backlog_width` sets the layout default for the Backlog column. The remaining `#wp_*` labels recolour the kind chips (the small `TODO / IDEA / CHECK / TOREAD / DEFER` tags on each card).
+The first label controls what gets scanned: `#wp_scan_archived` decides whether archived notes are included. Note that which subtrees are scanned is set separately, through the ⚙ scope panel in the planner header, not via a label. `#wp_backlog_width` sets the layout default for the Backlog column. The remaining `#wp_*` labels recolour the kind chips (the small `TODO / IDEA / CHECK / TOREAD / DEFER / EMAIL` tags on each card).
 
 | Setting | Description |
 | --- | --- |
@@ -345,6 +370,7 @@ The first label controls what gets scanned: `#wp_scan_archived` decides whether 
 | `#wp_check=<colour>` | Overrides the `CHECK` chip colour. Default: green. |
 | `#wp_toread=<colour>` | Overrides the `TOREAD` chip colour. Default: purple. |
 | `#wp_defer=<colour>` | Overrides the `DEFER` chip colour. Default: teal. |
+| `#wp_email=<colour>` | Overrides the `EMAIL` chip colour. Default: red. |
 
 The user can also set the Backlog width interactively by dragging the right edge of the Backlog column. The dragged value is saved into the `#plannerdata` JSON and takes precedence over `#wp_backlog_width` until the saved value is cleared.
 
@@ -396,6 +422,7 @@ A populated file looks roughly like this:
   "abc123::TODO::call_the_dentist": "2026-05-15",
   "abc123::TODO::buy_milk": "2026-05-15",
   "def456::IDEA::new_pricing_model": "2026-05-17",
+  "ghi789::ATTR::todo::Weekly_review": "2026-05-19",
   "_order": {
     "2026-05-15": [
       "abc123::TODO::buy_milk",
@@ -472,6 +499,7 @@ If something is deeply wrong, you can delete the `#plannerdata` note entirely an
 | Limitation | What to do |
 | --- | --- |
 | Task IDs are not permanent. | Editing the first 48 characters of a task's text in its source note changes its ID, so its planned day mapping is lost. Drag it back where you want it. |
+| Note task IDs follow the note title. | Renaming a note that is a note task (`#todo` / `#email`) changes its task ID, losing its scheduled day. Drag it back after renaming. |
 | Done items accumulate. | Greyed lines stay in source notes. There is no automatic cleanup. Delete them manually when you want a tidy source. |
 | There is no real-time sync. | Edit tasks in source notes, then click `⟳` to reload the planner. |
 | Mobile drag is awkward. | Touch drag works, but is not ideal on small screens. Prefer the `@date` suffix on mobile. |
