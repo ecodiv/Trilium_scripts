@@ -169,8 +169,8 @@ This model is intentionally simple. If a project spans 20 weeks but you take two
 
 When a project has an **End week** set, the tracker introduces a second constraint on the remaining weeks alongside the working-weeks count:
 
-- **Unspent weeks** — the working-weeks count still unaccounted for in the plan (`totalWeeks − weeksEntered`). This is the existing model.
-- **Calendar weeks left** — real ISO weeks from the current week up to and including the end week. The current (in-progress) week counts as 1.
+- **Unspent weeks**: the number of planned working weeks that have not yet had any hours logged (totalWeeks − weeksEntered).
+- **Calendar weeks left**: real ISO weeks from the current week up to and including the end week. The current (in-progress) week counts as 1.
 
 The remaining weeks used for all calculations is `min(unspentWeeks, calendarWeeksLeft)`. When the calendar deadline arrives before the unspent plan weeks run out, the required hours/week rises to fit the remaining budget into the fewer real weeks left.
 
@@ -181,7 +181,7 @@ The "Weeks left" cell on the project card shows which constraint is active:
 | **Weeks left** | The unspent working-weeks count is the binding constraint, or no end week is set. |
 | **Weeks left (deadline)** (red) | The calendar deadline is closer than the remaining plan weeks. The required pace is driven by the deadline. |
 
-Projects without an end week behave exactly as before — the deadline logic is inactive unless you set one. Old saved projects load fine and default to no start or end week.
+Projects without an end week are not affected by the deadline logic — it is only active when an end week is set.
 
 > [!NOTE]
 > Calendar weeks left is calculated from today's date at the moment the tracker loads. It is not recalculated until you reload the widget.

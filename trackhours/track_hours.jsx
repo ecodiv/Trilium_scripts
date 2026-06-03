@@ -19,10 +19,10 @@
  *   - Render note widget; `api` is Trilium's FrontendScriptApi.
  *   - One JSON child note (#urendata) stores projects + entered weeks.
  *   - Read-only backend work uses runOnBackend with a SYNCHRONOUS callback
- *     (the API now rejects async callbacks here). Backend work that awaits —
- *     creating the data note, note.save() — uses
+ *     (the API now rejects async callbacks here). Backend work that awaits, 
+ *     creating the data note, note.save(), uses
  *     runAsyncOnBackendWithManualTransactionHandling instead.
- *   - Preact (not React) via "trilium:preact".
+ *   - Preact via "trilium:preact".
  */
 
 import { useEffect, useState, useCallback, useMemo } from "trilium:preact";
@@ -52,7 +52,7 @@ function normalizeData(d) {
     const obj = (d && typeof d === "object") ? d : {};
     return {
         projects: Array.isArray(obj.projects)
-            ? obj.projects.map(p => ({ startWeek: "", endWeek: "", ...p }))
+            ? obj.projects.map(p => ({ code: "", color: "", startWeek: "", endWeek: "", archived: false, ...p }))
             : [],
         weeks: (obj.weeks && typeof obj.weeks === "object" && !Array.isArray(obj.weeks))
             ? obj.weeks
@@ -279,7 +279,7 @@ function calcProjectStats(project, weeks) {
 
 function StatusBadge({ delta }) {
     if (Math.abs(delta) < 0.5) {
-        return <span style={styles.badge("var(--color-background-success,#e6f4ea)", "var(--color-text-success,#2e7d32)")}>On schedule</span>;
+        return null;
     }
     if (delta > 0) {
         return <span style={styles.badge("var(--color-background-success,#e6f4ea)", "var(--color-text-success,#2e7d32)")}>+{delta.toFixed(1)}h ahead</span>;
@@ -295,19 +295,22 @@ function ProgressBar({ pct }) {
     );
 }
 
-function ProjectCard({ project, stats, onEdit, onDelete }) {
-    const { name, totalHours, totalWeeks } = project;
+function ProjectCard({ project, stats, onEdit }) {
+    const { name, code, totalHours, totalWeeks } = project;
     const { madeHours, delta, remainingWeeks, unspentWeeks, calendarWeeksLeft: calLeft, remainingHours, neededPerWeek, plannedPerWeek, pct } = stats;
     const deadlineCapped = calLeft !== null && calLeft < unspentWeeks;
 
+    const cardStyle = project.color
+        ? { ...styles.card, borderTop: `3px solid ${project.color}` }
+        : styles.card;
+
     return (
-        <div style={styles.card}>
+        <div style={cardStyle}>
             <div style={styles.cardHeader}>
-                <span style={styles.projectName}>{name}</span>
+                <span style={styles.projectName}>{name}{code ? ` (${code})` : ""}</span>
                 <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
                     <StatusBadge delta={delta} />
                     <button style={styles.iconBtn} onClick={onEdit} title="Edit project">✎</button>
-                    <button style={{ ...styles.iconBtn, color: "var(--color-text-danger,#c62828)" }} onClick={onDelete} title="Delete project">✕</button>
                 </div>
             </div>
 
@@ -333,7 +336,7 @@ function StatCell({ label, value, highlight }) {
     return (
         <div style={styles.statCell}>
             <div style={styles.statLabel}>{label}</div>
-            <div style={{ ...styles.statValue, color: highlight ? "var(--color-text-danger,#c62828)" : "var(--color-text-primary,#333)" }}>{value}</div>
+            <div style={{ ...styles.statValue, color: highlight ? "var(--color-text-danger,#c62828)" : "var(--main-text-color,#333)" }}>{value}</div>
         </div>
     );
 }
@@ -404,7 +407,7 @@ function WeekEntry({ weekKey, cell, onSave, onClear }) {
 }
 
 function ProjectForm({ initial, onSave, onCancel }) {
-    const blank = { name: "", totalHours: "", totalWeeks: "", startWeek: "", endWeek: "" };
+    const blank = { name: "", code: "", color: "", totalHours: "", totalWeeks: "", startWeek: "", endWeek: "" };
     const [form, setForm] = useState(initial || blank);
     const [error, setError] = useState("");
 
@@ -436,6 +439,8 @@ function ProjectForm({ initial, onSave, onCancel }) {
         onSave({
             id: initial?.id || `proj_${Date.now()}`,
             name: form.name.trim(),
+            code: form.code.trim(),
+            color: form.color || "",
             totalHours: total,
             totalWeeks: weeks,
             startWeek,
@@ -450,6 +455,23 @@ function ProjectForm({ initial, onSave, onCancel }) {
             <div style={styles.formGrid}>
                 <label style={styles.formLabel}>Name</label>
                 <input style={styles.input} value={form.name} onChange={e => set("name", e.target.value)} placeholder="Project name" />
+
+                <label style={styles.formLabel}>Project code (optional)</label>
+                <input style={styles.input} value={form.code} onChange={e => set("code", e.target.value)} placeholder="e.g. ACME-2025" />
+
+                <label style={styles.formLabel}>Color (optional)</label>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <input
+                        type="color"
+                        value={form.color || "#888888"}
+                        onChange={e => set("color", e.target.value)}
+                        style={{ width: "40px", height: "28px", padding: "0", border: "0.5px solid var(--main-border-color,#d0d0d0)", borderRadius: "4px", cursor: "pointer" }}
+                        title="Pick a color band for this project"
+                    />
+                    {form.color
+                        ? <button type="button" style={styles.btnSecondary} onClick={() => set("color", "")}>None</button>
+                        : <span style={styles.meta}>No color (default)</span>}
+                </div>
 
                 <label style={styles.formLabel}>Total available hours</label>
                 <input style={styles.input} type="number" min="1" step="1" value={form.totalHours} onChange={e => set("totalHours", e.target.value)} placeholder="e.g. 200" />
@@ -525,14 +547,75 @@ function UrenTracker() {
         setShowNewProject(false);
     }, []);
 
-    const handleDeleteProject = useCallback(async (id) => {
-        if (!confirm("Delete project? Hours entered for this project remain stored in the data.")) return;
+    const handleArchiveProject = useCallback(async (id, archived) => {
         setData(prev => {
-            const newData = { ...prev, projects: prev.projects.filter(p => p.id !== id) };
+            const newData = {
+                ...prev,
+                projects: prev.projects.map(p => p.id === id ? { ...p, archived } : p),
+            };
             saveData(newData);
             return newData;
         });
     }, []);
+
+    const handleCleanup = useCallback(async () => {
+        setData(prev => {
+            const archivedIds = new Set(prev.projects.filter(p => p.archived).map(p => p.id));
+            if (archivedIds.size === 0) return prev;
+            if (!confirm(`Permanently remove ${archivedIds.size} archived project(s) and all their hour records? This cannot be undone.`)) return prev;
+
+            const projects = prev.projects.filter(p => !archivedIds.has(p.id));
+
+            // Strip archived projects out of every week, dropping now-empty weeks.
+            const weeks = {};
+            for (const [wk, weekData] of Object.entries(prev.weeks)) {
+                const kept = {};
+                for (const [pid, cell] of Object.entries(weekData)) {
+                    if (!archivedIds.has(pid)) kept[pid] = cell;
+                }
+                if (Object.keys(kept).length > 0) weeks[wk] = kept;
+            }
+
+            const newData = { ...prev, projects, weeks };
+            saveData(newData);
+            return newData;
+        });
+    }, []);
+
+    /* Export all hour records as CSV. The project column holds the project
+       NAME (not its id), plus a separate project code column. One row per
+       (week, project) with summed hours. */
+    const handleExportCsv = useCallback(() => {
+        const byId = {};
+        for (const p of data.projects) byId[p.id] = p;
+
+        const esc = (v) => {
+            const s = String(v ?? "");
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+
+        const rows = [["Week", "Project", "Code", "Hours"]];
+        for (const wk of Object.keys(data.weeks).sort()) {
+            const weekData = data.weeks[wk];
+            for (const pid of Object.keys(weekData)) {
+                const hours = sumCell(weekData[pid]);
+                if (hours <= 0) continue;
+                const p = byId[pid];
+                rows.push([wk, p ? p.name : pid, p ? (p.code || "") : "", hours]);
+            }
+        }
+
+        const csv = rows.map(r => r.map(esc).join(",")).join("\r\n");
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `hours_export_${currentWeekKey()}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [data]);
 
     /* ── Weekly hours entry (per project, per week) ── */
 
@@ -584,6 +667,7 @@ function UrenTracker() {
         if (!data) return null;
         let totalMade = 0, totalPlanned = 0, totalBudget = 0, totalRemaining = 0;
         for (const p of data.projects) {
+            if (p.archived) continue;
             const s = stats[p.id];
             totalMade += s.madeHours;
             totalPlanned += s.plannedSoFar;
@@ -604,7 +688,10 @@ function UrenTracker() {
     useEffect(() => {
         if (!data || data.projects.length === 0) return;
         const stillExists = data.projects.some(p => p.id === selectedProjectId);
-        if (!stillExists) setSelectedProjectId(data.projects[0].id);
+        if (!stillExists) {
+            const firstActive = data.projects.find(p => !p.archived) || data.projects[0];
+            setSelectedProjectId(firstActive.id);
+        }
     }, [data, selectedProjectId]);
 
     /* Weeks that already have an entry for the selected project (newest first). */
@@ -653,19 +740,18 @@ function UrenTracker() {
                         </div>
                     )}
 
-                    {data.projects.length === 0 ? (
+                    {data.projects.filter(p => !p.archived).length === 0 ? (
                         <div style={styles.emptyState}>
-                            No projects yet. Go to <strong>Projects</strong> to get started.
+                            No active projects. Go to <strong>Projects</strong> to get started.
                         </div>
                     ) : (
                         <div style={styles.cardList}>
-                            {data.projects.map(p => (
+                            {data.projects.filter(p => !p.archived).map(p => (
                                 <ProjectCard
                                     key={p.id}
                                     project={p}
                                     stats={stats[p.id]}
                                     onEdit={() => { setEditProject(p); setTab("projects"); }}
-                                    onDelete={() => handleDeleteProject(p.id)}
                                 />
                             ))}
                         </div>
@@ -688,9 +774,16 @@ function UrenTracker() {
                                     value={selectedProjectId || ""}
                                     onChange={e => { setSelectedProjectId(e.target.value); setPendingWeeks([]); }}
                                 >
-                                    {data.projects.map(p => (
+                                    {data.projects.filter(p => !p.archived).map(p => (
                                         <option key={p.id} value={p.id}>{p.name}</option>
                                     ))}
+                                    {data.projects.some(p => p.archived) && (
+                                        <optgroup label="Archived">
+                                            {data.projects.filter(p => p.archived).map(p => (
+                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                        </optgroup>
+                                    )}
                                 </select>
                             </div>
 
@@ -763,23 +856,53 @@ function UrenTracker() {
                         />
                     )}
                     {!editProject && !showNewProject && (
-                        <button style={{ ...styles.btnPrimary, marginBottom: "12px" }} onClick={() => setShowNewProject(true)}>
-                            + New project
-                        </button>
+                        <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
+                            <button style={styles.btnPrimary} onClick={() => setShowNewProject(true)}>
+                                + New project
+                            </button>
+                            <button style={styles.btnSecondary} onClick={handleExportCsv}>
+                                Export CSV
+                            </button>
+                            <button
+                                style={{
+                                    ...styles.btnSecondary,
+                                    color: "var(--color-text-danger,#c62828)",
+                                    opacity: data.projects.some(p => p.archived) ? 1 : 0.5,
+                                }}
+                                disabled={!data.projects.some(p => p.archived)}
+                                onClick={handleCleanup}
+                                title="Permanently remove all archived projects and their hour records"
+                            >
+                                Clean up archived
+                            </button>
+                        </div>
                     )}
                     {data.projects.length === 0 && !showNewProject && (
                         <div style={styles.emptyState}>No projects yet.</div>
                     )}
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
                         {data.projects.map(p => (
-                            <div key={p.id} style={styles.projectListRow}>
+                            <div
+                                key={p.id}
+                                style={{ ...styles.projectListRow, opacity: p.archived ? 0.55 : 1 }}
+                            >
                                 <div>
-                                    <span style={styles.projectName}>{p.name}</span>
+                                    {p.color && (
+                                        <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "2px", background: p.color, marginRight: "6px", verticalAlign: "middle" }} />
+                                    )}
+                                    <span style={styles.projectName}>{p.name}{p.code ? ` (${p.code})` : ""}</span>
+                                    {p.archived && <span style={styles.meta}> · archived</span>}
                                     <span style={styles.meta}> — {p.totalHours}h budget · {p.totalWeeks} weeks · {(p.totalWeeks > 0 ? (p.totalHours / p.totalWeeks) : 0).toFixed(1)}h/week</span>
                                 </div>
                                 <div style={{ display: "flex", gap: "6px" }}>
-                                    <button style={styles.iconBtn} onClick={() => setEditProject(p)}>✎</button>
-                                    <button style={{ ...styles.iconBtn, color: "var(--color-text-danger,#c62828)" }} onClick={() => handleDeleteProject(p.id)}>✕</button>
+                                    <button style={styles.iconBtn} onClick={() => setEditProject(p)} title="Edit project">✎</button>
+                                    <button
+                                        style={styles.iconBtn}
+                                        onClick={() => handleArchiveProject(p.id, !p.archived)}
+                                        title={p.archived ? "Unarchive project" : "Archive project"}
+                                    >
+                                        {p.archived ? "↩" : "🗄"}
+                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -795,7 +918,7 @@ function SummaryCell({ label, value, highlight, positive }) {
         ? "var(--color-text-danger,#c62828)"
         : positive
             ? "var(--color-text-success,#2e7d32)"
-            : "var(--color-text-primary,#333)";
+            : "var(--main-text-color,#333)";
     return (
         <div style={styles.summaryCell}>
             <div style={styles.statLabel}>{label}</div>
@@ -821,7 +944,7 @@ const styles = {
     root: {
         fontFamily: "var(--font-sans, sans-serif)",
         color: "var(--main-text-color, #333)",
-        padding: "0 0 2rem",
+        padding: "0 1.25rem 2rem",
         maxWidth: "900px",
     },
     loading: {
