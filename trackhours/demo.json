@@ -1,0 +1,390 @@
+{
+  "projects": [
+    {
+      "code": "WEB-2026",
+      "color": "#5b8def",
+      "startWeek": "2026-W01",
+      "endWeek": "2026-W31",
+      "archived": false,
+      "id": "proj_demo_redesign",
+      "name": "Website Redesign",
+      "totalHours": 160
+    },
+    {
+      "code": "MIG-2026",
+      "color": "#e0823d",
+      "startWeek": "2026-W01",
+      "endWeek": "2026-W31",
+      "archived": false,
+      "id": "proj_demo_migration",
+      "name": "Data Migration",
+      "totalHours": 120
+    },
+    {
+      "code": "TRN-2026",
+      "color": "#5aab61",
+      "startWeek": "2026-W01",
+      "endWeek": "2026-W31",
+      "archived": false,
+      "id": "proj_demo_training",
+      "name": "Team Training",
+      "totalHours": 80
+    },
+    {
+      "code": "OPS-LT",
+      "color": "#8064a2",
+      "startWeek": "2025-W29",
+      "endWeek": "2027-W52",
+      "archived": false,
+      "id": "proj_demo_platform",
+      "name": "Platform Maintenance",
+      "totalHours": 520
+    }
+  ],
+  "weeks": {
+    "2026-W01": {
+      "proj_demo_redesign": [
+        7
+      ],
+      "proj_demo_migration": [
+        2,
+        2
+      ],
+      "proj_demo_platform": [
+        3,
+        2.5
+      ]
+    },
+    "2026-W02": {
+      "proj_demo_redesign": [
+        2.5,
+        3
+      ],
+      "proj_demo_migration": [
+        3.5
+      ],
+      "proj_demo_training": [
+        0
+      ]
+    },
+    "2026-W03": {
+      "proj_demo_redesign": [
+        7
+      ],
+      "proj_demo_migration": [
+        2
+      ],
+      "proj_demo_training": [
+        2,
+        1.5
+      ],
+      "proj_demo_platform": [
+        5
+      ]
+    },
+    "2026-W04": {
+      "proj_demo_redesign": [
+        2.5,
+        2
+      ],
+      "proj_demo_migration": [
+        4
+      ],
+      "proj_demo_training": [
+        3
+      ]
+    },
+    "2026-W05": {
+      "proj_demo_redesign": [
+        3,
+        2
+      ],
+      "proj_demo_migration": [
+        4
+      ],
+      "proj_demo_training": [
+        3.5
+      ]
+    },
+    "2026-W07": {
+      "proj_demo_redesign": [
+        3,
+        3.5
+      ],
+      "proj_demo_migration": [
+        4
+      ],
+      "proj_demo_training": [
+        2
+      ],
+      "proj_demo_platform": [
+        1.5,
+        2
+      ]
+    },
+    "2026-W08": {
+      "proj_demo_redesign": [
+        4.5
+      ],
+      "proj_demo_migration": [
+        2.5
+      ],
+      "proj_demo_training": [
+        4
+      ]
+    },
+    "2026-W09": {
+      "proj_demo_redesign": [
+        3,
+        2.5
+      ],
+      "proj_demo_training": [
+        2
+      ]
+    },
+    "2026-W10": {
+      "proj_demo_redesign": [
+        6
+      ],
+      "proj_demo_migration": [
+        3.5
+      ],
+      "proj_demo_training": [
+        0
+      ]
+    },
+    "2026-W11": {
+      "proj_demo_redesign": [
+        6.5
+      ],
+      "proj_demo_training": [
+        3.5
+      ]
+    },
+    "2026-W12": {
+      "proj_demo_redesign": [
+        2.5,
+        4
+      ],
+      "proj_demo_training": [
+        2
+      ]
+    },
+    "2026-W13": {
+      "proj_demo_redesign": [
+        0
+      ],
+      "proj_demo_migration": [
+        2.5,
+        1.5
+      ],
+      "proj_demo_training": [
+        2.5
+      ],
+      "proj_demo_platform": [
+        2.5,
+        3
+      ]
+    },
+    "2026-W14": {
+      "proj_demo_redesign": [
+        2.5,
+        2
+      ],
+      "proj_demo_migration": [
+        3.5
+      ]
+    },
+    "2026-W15": {
+      "proj_demo_redesign": [
+        6.5
+      ],
+      "proj_demo_migration": [
+        2.5
+      ],
+      "proj_demo_training": [
+        2
+      ]
+    },
+    "2026-W16": {
+      "proj_demo_redesign": [
+        2.5,
+        2
+      ],
+      "proj_demo_training": [
+        2.5,
+        4
+      ],
+      "proj_demo_platform": [
+        3.5
+      ]
+    },
+    "2026-W17": {
+      "proj_demo_redesign": [
+        3,
+        3.5
+      ],
+      "proj_demo_migration": [
+        2,
+        1.5
+      ],
+      "proj_demo_training": [
+        1.5,
+        2,
+        1.5,
+        3.5
+      ]
+    },
+    "2026-W20": {
+      "proj_demo_redesign": [
+        5.5
+      ],
+      "proj_demo_migration": [
+        2
+      ],
+      "proj_demo_platform": [
+        2.5,
+        2
+      ]
+    },
+    "2026-W21": {
+      "proj_demo_redesign": [
+        5
+      ],
+      "proj_demo_migration": [
+        2.5
+      ],
+      "proj_demo_training": [
+        2.5
+      ],
+      "proj_demo_platform": [
+        2
+      ]
+    },
+    "2026-W22": {
+      "proj_demo_redesign": [
+        0
+      ],
+      "proj_demo_migration": [
+        2.5
+      ],
+      "proj_demo_training": [
+        2.5
+      ],
+      "proj_demo_platform": [
+        3.5
+      ]
+    },
+    "2026-W06": {
+      "proj_demo_migration": [
+        2.5
+      ],
+      "proj_demo_training": [
+        3.5
+      ]
+    },
+    "2026-W18": {
+      "proj_demo_migration": [
+        1.5,
+        2.5
+      ],
+      "proj_demo_training": [
+        3.5
+      ]
+    },
+    "2026-W19": {
+      "proj_demo_migration": [
+        2,
+        1.5
+      ],
+      "proj_demo_training": [
+        2
+      ],
+      "proj_demo_platform": [
+        4
+      ]
+    },
+    "2025-W30": {
+      "proj_demo_platform": [
+        4.5
+      ]
+    },
+    "2025-W32": {
+      "proj_demo_platform": [
+        3,
+        2
+      ]
+    },
+    "2025-W33": {
+      "proj_demo_platform": [
+        3.5
+      ]
+    },
+    "2025-W34": {
+      "proj_demo_platform": [
+        1.5,
+        1.5
+      ]
+    },
+    "2025-W38": {
+      "proj_demo_platform": [
+        3.5
+      ]
+    },
+    "2025-W41": {
+      "proj_demo_platform": [
+        3
+      ]
+    },
+    "2025-W42": {
+      "proj_demo_platform": [
+        3
+      ]
+    },
+    "2025-W43": {
+      "proj_demo_platform": [
+        4.5
+      ]
+    },
+    "2025-W45": {
+      "proj_demo_platform": [
+        3,
+        2.5
+      ]
+    },
+    "2025-W47": {
+      "proj_demo_platform": [
+        2.5,
+        2
+      ]
+    },
+    "2025-W48": {
+      "proj_demo_platform": [
+        0
+      ]
+    },
+    "2025-W50": {
+      "proj_demo_platform": [
+        3,
+        2.5
+      ]
+    },
+    "2025-W51": {
+      "proj_demo_platform": [
+        2,
+        2.5
+      ]
+    },
+    "2025-W52": {
+      "proj_demo_platform": [
+        4.5
+      ]
+    }
+  },
+  "holidays": [
+    "2025-W52",
+    "2026-W08",
+    "2026-W52",
+    "2026-W53"
+  ]
+}
