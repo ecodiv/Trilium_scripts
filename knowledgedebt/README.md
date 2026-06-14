@@ -20,6 +20,8 @@
 * [Using filters](#using-filters)
   * [Mode: Exclude vs Include](#mode-exclude-vs-include)
   * [Subtrees](#subtrees)
+  * [Categories shown](#categories-shown)
+  * [Thresholds](#thresholds)
   * [What is always excluded](#what-is-always-excluded)
 * [Configuration](#configuration)
   * [Data safety](#data-safety)
@@ -98,10 +100,12 @@ The dashboard scans every user-content note (`text` and `code` types) in your da
 | Category | What it means | Default sort |
 | --- | --- | --- |
 | **Orphans** | No [internal links](https://docs.triliumnotes.org/user-guide/note-types/text/links/reference-links) and no relation attributes point to this note. | Oldest modified first |
-| **Stubs** | Body content between 1 and 250 characters, with no children. Draft material that was never developed. | Smallest first |
+| **Stubs** | Body content between the stub minimum and maximum character count (1–100 by default), with no children. Draft material that was never developed. | Smallest first |
 | **Empty** | Body is null, whitespace, or an empty paragraph. No children. | Most recently modified first |
-| **Old TODOs** | Has a label containing `todo` (e.g. `#todo`, `#todo-later`), not modified in more than 30 days. | Oldest modified first |
-| **Abandoned** | No children, not modified in more than 90 days. | Oldest modified first |
+| **Old TODOs** | Has a label containing `todo` (e.g. `#todo`, `#todo-later`), not modified within the TODO age threshold (30 days by default). | Oldest modified first |
+| **Abandoned** | No children, not modified within the abandoned age threshold (90 days by default). | Oldest modified first |
+
+Which categories appear and the threshold values used are both configurable from the `⚙ Config` panel; see [Categories shown](#categories-shown) and [Thresholds](#thresholds).
 
 
 ### Reading the table
@@ -144,8 +148,8 @@ From left to right:
 | --- | --- |
 | **🩺 Knowledge Debt** | Title (decorative) |
 | **🔍 filter by title…** | Search input. Appears after the first scan. |
-| **⚙ Config** | Toggle the configuration panel. Shows a badge (e.g. `−3`) when subtrees are configured. |
-| **▶ Scan** | Run the scan. Disabled while a scan is in progress, and also when Include mode has no subtrees. |
+| **⚙ Config** | Toggle the configuration panel: scan scope, which categories are shown, and threshold values. Shows a badge (e.g. `−3`) when subtrees are configured. |
+| **▶ Scan** | Run the scan. Disabled while a scan is in progress, when Include mode has no subtrees, and when every category is hidden. |
 
 ## Using filters
 
@@ -174,6 +178,29 @@ You can also drag multiple selected notes at once. Trilium passes them as a sing
 
 To remove a note, click the `×` next to a chip. Changes are saved automatically.
 
+### Categories shown
+
+Below the subtree controls, a row of toggles lets you choose which of the five categories the dashboard scans and displays. Each toggle is coloured to match its stat card. A category that is switched off is not queried during the scan, does not appear as a stat card, and its tab cannot be selected.
+
+This is useful when you only care about some kinds of debt. If you never use `#todo` labels, for instance, you can hide Old TODOs so it stops cluttering the dashboard, and the scan skips that query entirely.
+
+If you switch off the category whose tab is currently active, the dashboard moves you to the first remaining visible category. If you switch off every category, there is nothing left to scan, so the `▶ Scan` button is disabled with a hint to enable at least one.
+
+### Thresholds
+
+Four numeric inputs control the boundaries the scan uses to decide what counts as debt:
+
+| Threshold | Applies to | Meaning | Default |
+| --- | --- | --- | --- |
+| **Stub min (chars)** | Stubs | Smallest body length, in characters, that still counts as a stub. | 1 |
+| **Stub max (chars)** | Stubs | Largest body length that counts as a stub. Notes longer than this are considered developed. | 100 |
+| **TODO age (days)** | Old TODOs | A `#todo`-labelled note must be unmodified for more than this many days to be flagged. | 30 |
+| **Abandoned age (days)** | Abandoned | A childless note must be unmodified for more than this many days to be flagged. | 90 |
+
+Values are committed when you click away from the input, and are clamped to sensible bounds. The stub range is kept valid automatically: if you set a minimum above the current maximum, the other bound is nudged to match. The threshold inputs for a hidden category are dimmed, since they have no effect while that category is off.
+
+Changes take effect on the next scan. As with all configuration, threshold values are saved automatically.
+
 ### What is always excluded
 
 Some notes are filtered out of scan results regardless of your config are:
@@ -185,7 +212,7 @@ The `#archived` exclusion is not inheritance-aware. Descendants of archived note
 
 ## Configuration
 
-The first time you change a setting in the configuration panel, the dashboard creates a text note titled **Knowledge Debt — Config** as a child of the Render note. The note is created with three labels:
+The first time you change a setting in the configuration panel, the dashboard creates a code note (JSON) titled **Knowledge Debt — Config** as a child of the Render note. The note is created with three labels:
 
 | Label | Purpose |
 | --- | --- |
@@ -193,7 +220,7 @@ The first time you change a setting in the configuration panel, the dashboard cr
 | `#hidePromotedAttributes` | Hides the label list when viewing the note. |
 | `#iconClass=bx bx-cog` | Gives the note a gear icon in the tree, so you can identify it at a glance. |
 
-The note's content is a JSON document with this shape:
+The note is a JSON code note, so Trilium displays its content with syntax highlighting. The content is a JSON document with this shape:
 
 ```
 {
@@ -201,15 +228,30 @@ The note's content is a JSON document with this shape:
   "subtrees": [
     { "noteId": "aBcD1234EfGh", "title": "Personal Journal" },
     { "noteId": "iJkL5678MnOp", "title": "Old Archive" }
-  ]
+  ],
+  "categories": {
+    "orphans": true,
+    "stubs": true,
+    "empty": true,
+    "todos": true,
+    "abandoned": true
+  },
+  "thresholds": {
+    "stubMin": 1,
+    "stubMax": 100,
+    "todoDays": 30,
+    "abandonedDays": 90
+  }
 }
 ```
+
+`categories` controls which categories are scanned and shown; a missing or omitted key defaults to shown. `thresholds` holds the four boundary values described under [Thresholds](#thresholds); missing keys fall back to their defaults and out-of-range values are clamped on load.
 
 You do not normally need to edit this note. To change settings, use the `⚙ Config` panel in the dashboard. If you really want to edit by hand, do so carefully. Corrupt JSON will be silently replaced with defaults on the next load.
 
 ### Data safety
 
-The dashboard is read-only with respect to your notes. The only writes it ever performs are to its own config note (when you change Mode or add/remove subtrees). Your source notes are never modified.
+The dashboard is read-only with respect to your notes. The only writes it ever performs are to its own config note (when you change Mode, add/remove subtrees, toggle categories, or adjust thresholds). Your source notes are never modified.
 
 Clicking a row opens the source note in your normal Trilium view, where you can edit it as you would any other note. The dashboard does not see, log, or persist anything about those edits.
 
@@ -236,10 +278,11 @@ The `+` indicates the per-category ceiling was hit. The default ceilings are 500
 
 ### Scan button is disabled
 
-Two cases:
+Three cases:
 
 1.  A scan is currently running. Wait for it to finish.
 2.  Mode is set to **Include** and no subtrees are listed. Include mode with no subtrees would scan nothing. Either drag at least one subtree in, or switch to **Exclude** mode.
+3.  Every category has been switched off in the config panel. Enable at least one category under **Categories shown**.
 
 ### Ultimate option
 

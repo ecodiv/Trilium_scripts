@@ -7,7 +7,7 @@
  *
  * Health dashboard for your PKM. Detects:
  *   • Orphans    — notes with no inbound internal links
- *   • Stubs      — content between 1–250 chars (drafts never developed)
+ *   • Stubs      — content between 1–100 chars (drafts never developed)
  *   • Empty      — null content or empty paragraph
  *   • Old TODOs  — note with a *todo* label, unmodified > 30 days
  *   • Abandoned  — no children, no modification > 90 days
@@ -81,11 +81,6 @@ function makeComparator(field, kind, dir) {
    (doc, launcher, search, book, webView, ...) are excluded. */
 const USER_TYPES = ['text', 'code'];
 
-const STUB_MIN = 1;
-const STUB_MAX = 250;
-const TODO_DAYS = 30;
-const ABANDONED_DAYS = 90;
-
 /* Pagination — rows shown per page in the table.
    The backend fetches everything; pagination is purely client-side
    so page navigation is instant and search filters the full set. */
@@ -141,7 +136,7 @@ function openNote(noteId, e) {
 async function runScan(config, systemNoteIds) {
     return await runOnBackend((userTypes, stubMin, stubMax, todoDays, abandonedDays,
                                 MAX_ORPHANS, MAX_STUBS, MAX_EMPTY, MAX_TODOS, MAX_ABANDONED,
-                                cfgMode, cfgSubtreeRoots, sysNoteIds) => {
+                                cfgMode, cfgSubtreeRoots, sysNoteIds, cfgCategories) => {
 
         /* Execute SQL safely; on error return fallback (default: []). */
         function safe(sql, fallback) {
@@ -159,6 +154,34 @@ async function runScan(config, systemNoteIds) {
             api.sql.getRows("SELECT name FROM sqlite_master WHERE type='table'").map(r => r.name)
         );
         const tables = [...tableNames].sort();
+
+        /* ── Date handling ───────────────────────────────────────────
+           Trilium stores timestamps as strings with a millisecond and
+           timezone suffix, e.g. "2024-01-15 09:30:00.000Z" (utc column)
+           or "2024-01-15 10:30:00.000+01:00" (local column).
+           SQLite's julianday() returns NULL for both of those forms,
+           which silently breaks any "older than N days" comparison
+           (NULL > N is never true → zero rows).
+
+           Fix: normalize to the bare "YYYY-MM-DD HH:MM:SS" prefix via
+           substr(col,1,19), which julianday() parses reliably. Compare
+           against julianday('now') (UTC) using the UTC column when it
+           exists, falling back to the local column otherwise. */
+        const noteCols = new Set(
+            api.sql.getRows("PRAGMA table_info(notes)").map(r => r.name)
+        );
+        const MOD_COL = noteCols.has('utcDateModified') ? 'utcDateModified' : 'dateModified';
+
+        /* SQL boolean: row's MOD_COL is more than `days` days in the past.
+           `alias` qualifies the column when the query joins other tables. */
+        function olderThanDays(days, alias) {
+            const col = (alias ? alias + '.' : '') + MOD_COL;
+            return `(
+                ${col} IS NOT NULL
+                AND julianday(substr(${col}, 1, 19)) IS NOT NULL
+                AND (julianday('now') - julianday(substr(${col}, 1, 19))) > ${days}
+            )`;
+        }
 
         /* ── Subtree expansion ──────────────────────────────────────
            Given a list of root noteIds, walk the branches table to find
@@ -322,16 +345,19 @@ async function runScan(config, systemNoteIds) {
             ? `AND n.noteId NOT IN (${sqlList(referencedArr)})`
             : '';
 
-        const orphans = safe(`
+        const cats = cfgCategories || {};
+        const want = (k) => cats[k] !== false;  // default to enabled
+
+        const orphans = want('orphans') ? safe(`
             SELECT n.noteId, n.title, n.type, n.dateModified
             FROM notes n
             WHERE ${BASE_FILTER}
               ${excludedClause}
             ORDER BY n.dateModified ASC LIMIT ${MAX_ORPHANS}
-        `, []);
+        `, []) : [];
 
-        /* ── ② Stubs: 1–250 chars, no children ─────────────────── */
-        const stubs = safe(`
+        /* ── ② Stubs: stubMin–stubMax chars, no children ───────── */
+        const stubs = want('stubs') ? safe(`
             SELECT n.noteId, n.title, n.type, n.dateModified,
                    LENGTH(b.content) AS contentLen
             FROM notes n
@@ -341,10 +367,10 @@ async function runScan(config, systemNoteIds) {
               AND LENGTH(b.content) BETWEEN ${stubMin} AND ${stubMax}
             ORDER BY LENGTH(b.content) ASC
             LIMIT ${MAX_STUBS}
-        `);
+        `) : [];
 
         /* ── ③ Empty: null/whitespace/empty-paragraph content, no children ── */
-        const empty = safe(`
+        const empty = want('empty') ? safe(`
             SELECT n.noteId, n.title, n.type, n.dateModified
             FROM notes n
             LEFT JOIN blobs b ON n.blobId = b.blobId
@@ -359,31 +385,31 @@ async function runScan(config, systemNoteIds) {
               )
             ORDER BY n.dateModified DESC
             LIMIT ${MAX_EMPTY}
-        `);
+        `) : [];
 
         /* ── ④ Old TODOs: label LIKE '%todo%', unmodified > N days ── */
-        const todos = safe(`
+        const todos = want('todos') ? safe(`
             SELECT DISTINCT n.noteId, n.title, n.type, n.dateModified,
                             a.name AS todoLabel
             FROM notes n
             JOIN attributes a ON n.noteId = a.noteId AND a.isDeleted = 0
             WHERE ${BASE_FILTER}
               AND LOWER(a.name) LIKE '%todo%'
-              AND CAST((julianday('now') - julianday(n.dateModified)) AS INTEGER) > ${todoDays}
+              AND ${olderThanDays(todoDays, 'n')}
             ORDER BY n.dateModified ASC
             LIMIT ${MAX_TODOS}
-        `);
+        `) : [];
 
         /* ── ⑤ Abandoned: no children, unmodified > N days ─────── */
-        const abandoned = safe(`
+        const abandoned = want('abandoned') ? safe(`
             SELECT n.noteId, n.title, n.type, n.dateModified
             FROM notes n
             WHERE ${BASE_FILTER}
               AND ${NO_CHILDREN}
-              AND CAST((julianday('now') - julianday(n.dateModified)) AS INTEGER) > ${abandonedDays}
+              AND ${olderThanDays(abandonedDays, 'n')}
             ORDER BY n.dateModified ASC
             LIMIT ${MAX_ABANDONED}
-        `);
+        `) : [];
 
         return {
             results: { orphans, stubs, empty, todos, abandoned },
@@ -395,12 +421,17 @@ async function runScan(config, systemNoteIds) {
             },
         };
     }, [
-        USER_TYPES, STUB_MIN, STUB_MAX, TODO_DAYS, ABANDONED_DAYS,
+        USER_TYPES,
+        (config && config.thresholds ? config.thresholds.stubMin       : DEFAULT_THRESHOLDS.stubMin),
+        (config && config.thresholds ? config.thresholds.stubMax       : DEFAULT_THRESHOLDS.stubMax),
+        (config && config.thresholds ? config.thresholds.todoDays      : DEFAULT_THRESHOLDS.todoDays),
+        (config && config.thresholds ? config.thresholds.abandonedDays : DEFAULT_THRESHOLDS.abandonedDays),
         MAX_RESULTS.orphans, MAX_RESULTS.stubs, MAX_RESULTS.empty,
         MAX_RESULTS.todos,   MAX_RESULTS.abandoned,
         (config && config.mode) || 'exclude',
         (config && config.subtrees ? config.subtrees.map(s => s.noteId) : []),
         systemNoteIds || [],
+        (config && config.categories) || DEFAULT_CATEGORIES,
     ]);
 }
 
@@ -409,7 +440,64 @@ async function runScan(config, systemNoteIds) {
 ══════════════════════════════════════════════════════════════════ */
 
 const CONFIG_LABEL = 'kdConfig';
-const DEFAULT_CONFIG = { mode: 'exclude', subtrees: [] };
+
+/* Default threshold values. Used when no config note exists yet and as
+   the fallback for any individual threshold missing from a saved config. */
+const DEFAULT_THRESHOLDS = {
+    stubMin:       1,
+    stubMax:       100,
+    todoDays:      30,
+    abandonedDays: 90,
+};
+
+/* Which categories are shown by default. Keys match TABS keys. */
+const DEFAULT_CATEGORIES = {
+    orphans:   true,
+    stubs:     true,
+    empty:     true,
+    todos:     true,
+    abandoned: true,
+};
+
+const DEFAULT_CONFIG = {
+    mode: 'exclude',
+    subtrees: [],
+    categories: { ...DEFAULT_CATEGORIES },
+    thresholds: { ...DEFAULT_THRESHOLDS },
+};
+
+/* Coerce a value to an integer within [min, max], falling back to dflt. */
+function clampInt(v, min, max, dflt) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return dflt;
+    return Math.min(max, Math.max(min, n));
+}
+
+/* Normalize a (possibly partial / corrupt) thresholds object, enforcing
+   sane bounds and stubMin <= stubMax. */
+function normalizeThresholds(t) {
+    const src = (t && typeof t === 'object') ? t : {};
+    let stubMin = clampInt(src.stubMin, 0, 1_000_000, DEFAULT_THRESHOLDS.stubMin);
+    let stubMax = clampInt(src.stubMax, 1, 1_000_000, DEFAULT_THRESHOLDS.stubMax);
+    if (stubMin > stubMax) stubMin = stubMax;
+    return {
+        stubMin,
+        stubMax,
+        todoDays:      clampInt(src.todoDays,      0, 100_000, DEFAULT_THRESHOLDS.todoDays),
+        abandonedDays: clampInt(src.abandonedDays, 0, 100_000, DEFAULT_THRESHOLDS.abandonedDays),
+    };
+}
+
+/* Normalize a (possibly partial / corrupt) categories object. Any missing
+   key defaults to shown (true); values coerced to boolean. */
+function normalizeCategories(c) {
+    const src = (c && typeof c === 'object') ? c : {};
+    const out = {};
+    for (const t of TABS) {
+        out[t.key] = (t.key in src) ? !!src[t.key] : true;
+    }
+    return out;
+}
 
 /* Load config. Returns { config, configNoteId } where configNoteId
    may be null if the note hasn't been created yet. */
@@ -422,9 +510,39 @@ async function loadConfig() {
             const raw = note.getContent();
             if (raw) {
                 const parsed = JSON.parse(raw);
+
+                // Categories: default any missing key to true (shown).
+                const cats = {};
+                const pCats = (parsed.categories && typeof parsed.categories === 'object')
+                    ? parsed.categories : {};
+                for (const k of Object.keys(defaults.categories)) {
+                    cats[k] = (k in pCats) ? !!pCats[k] : true;
+                }
+
+                // Thresholds: clamp to sane bounds, fall back to defaults per-field.
+                const dt = defaults.thresholds;
+                const pt = (parsed.thresholds && typeof parsed.thresholds === 'object')
+                    ? parsed.thresholds : {};
+                const ci = (v, min, max, d) => {
+                    const n = Math.round(Number(v));
+                    if (!Number.isFinite(n)) return d;
+                    return Math.min(max, Math.max(min, n));
+                };
+                let stubMin = ci(pt.stubMin, 0, 1000000, dt.stubMin);
+                let stubMax = ci(pt.stubMax, 1, 1000000, dt.stubMax);
+                if (stubMin > stubMax) stubMin = stubMax;
+                const thresholds = {
+                    stubMin,
+                    stubMax,
+                    todoDays:      ci(pt.todoDays,      0, 100000, dt.todoDays),
+                    abandonedDays: ci(pt.abandonedDays, 0, 100000, dt.abandonedDays),
+                };
+
                 cfg = {
                     mode: (parsed.mode === 'include' ? 'include' : 'exclude'),
                     subtrees: Array.isArray(parsed.subtrees) ? parsed.subtrees : [],
+                    categories: cats,
+                    thresholds,
                 };
             }
         } catch (_) { /* corrupt JSON → use defaults */ }
@@ -440,16 +558,25 @@ async function saveConfig(config, parentNoteId) {
         async (jsonStr, parentId, label) => {
             let note = api.getNoteWithLabel(label);
             if (!note) {
-                const created = await api.createTextNote(
-                    parentId,
-                    'Knowledge Debt — Config',
-                    jsonStr
-                );
+                // Create as a code note with JSON mime so Trilium shows it
+                // with syntax highlighting rather than as rich text.
+                const created = await api.createNewNote({
+                    parentNoteId: parentId,
+                    title: 'Knowledge Debt — Config',
+                    type: 'code',
+                    mime: 'application/json',
+                    content: jsonStr,
+                });
                 note = created.note;
                 await note.setLabel(label, '');
                 await note.setLabel('hidePromotedAttributes', '');
                 await note.setLabel('iconClass', 'bx bx-cog');
             } else {
+                // Migrate any pre-existing text-type config note to code/json.
+                if (note.type !== 'code' || note.mime !== 'application/json') {
+                    note.type = 'code';
+                    note.mime = 'application/json';
+                }
                 note.setContent(jsonStr);
                 await note.save();
             }
@@ -634,6 +761,58 @@ const CSS = `
     font-style: italic; margin-top: 6px;
 }
 
+/* Category toggles + threshold inputs */
+.kd-config-section {
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid var(--main-border-color);
+}
+.kd-cat-toggles {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+}
+.kd-cat-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 14px; cursor: pointer;
+    font-size: 12px; user-select: none;
+    border: 1px solid var(--main-border-color);
+    background: var(--main-background-color);
+    color: var(--muted-text-color);
+    transition: opacity 0.15s;
+}
+.kd-cat-toggle:hover { opacity: 0.85; }
+.kd-cat-toggle.on {
+    color: var(--main-text-color);
+    border-color: var(--kd-cat-color, var(--main-border-color));
+    box-shadow: inset 0 0 0 1px var(--kd-cat-color, transparent);
+}
+.kd-cat-toggle.off { opacity: 0.5; }
+.kd-cat-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--kd-cat-color, #888);
+}
+.kd-cat-toggle.off .kd-cat-dot { background: var(--muted-text-color); }
+
+.kd-thresholds {
+    display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px;
+}
+.kd-threshold {
+    display: flex; flex-direction: column; gap: 3px;
+}
+.kd-threshold label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted-text-color); font-weight: 600;
+}
+.kd-threshold input {
+    width: 90px; padding: 4px 6px; border-radius: 4px; font-size: 12px;
+    background: var(--main-background-color);
+    color: var(--main-text-color);
+    border: 1px solid var(--main-border-color);
+    font-variant-numeric: tabular-nums;
+}
+.kd-threshold.disabled { opacity: 0.4; }
+.kd-threshold-err {
+    font-size: 10px; color: #d97070; margin-top: 2px;
+}
+
 .kd-badge {
     display: inline-block; min-width: 16px; height: 16px;
     padding: 0 4px; border-radius: 8px; font-size: 10px;
@@ -667,10 +846,12 @@ function injectStyle() {
    COMPONENTS
 ══════════════════════════════════════════════════════════════════ */
 
-function StatsBar({ data, activeTab, onSelect, maxResults }) {
+function StatsBar({ data, activeTab, onSelect, maxResults, categories }) {
+    const cats = categories || {};
+    const visible = TABS.filter(t => cats[t.key] !== false);
     return (
-        <div class="kd-stats">
-            {TABS.map(({ key, label, color, icon }) => {
+        <div class="kd-stats" style={{ gridTemplateColumns: `repeat(${visible.length || 1}, 1fr)` }}>
+            {visible.map(({ key, label, color, icon }) => {
                 const count = data[key] ? data[key].length : 0;
                 const atLimit = maxResults && count >= maxResults[key];
                 const isActive = key === activeTab;
@@ -856,8 +1037,56 @@ function parseDragPayload(dt) {
 function ConfigPanel({ config, onChange }) {
     const [dragOver, setDragOver] = useState(false);
     const subtrees = config.subtrees || [];
+    const categories = config.categories || DEFAULT_CATEGORIES;
+    const thresholds = config.thresholds || DEFAULT_THRESHOLDS;
+
+    // Local string state for threshold inputs so the user can clear/retype
+    // without the value snapping back mid-edit. Committed (clamped) on blur.
+    const [draft, setDraft] = useState({
+        stubMin:       String(thresholds.stubMin),
+        stubMax:       String(thresholds.stubMax),
+        todoDays:      String(thresholds.todoDays),
+        abandonedDays: String(thresholds.abandonedDays),
+    });
+
+    // Re-sync drafts if config changes from outside (e.g. loaded from note).
+    useEffect(() => {
+        setDraft({
+            stubMin:       String(thresholds.stubMin),
+            stubMax:       String(thresholds.stubMax),
+            todoDays:      String(thresholds.todoDays),
+            abandonedDays: String(thresholds.abandonedDays),
+        });
+    // eslint-disable-next-line
+    }, [thresholds.stubMin, thresholds.stubMax, thresholds.todoDays, thresholds.abandonedDays]);
 
     const setMode = (mode) => onChange({ ...config, mode });
+
+    const toggleCategory = (key) => {
+        const next = { ...categories, [key]: !(categories[key] !== false) };
+        onChange({ ...config, categories: next });
+    };
+
+    const onThresholdInput = (key, val) => {
+        setDraft(d => ({ ...d, [key]: val }));
+    };
+
+    // Commit a single threshold: clamp, enforce stubMin <= stubMax, persist.
+    const commitThreshold = (key) => {
+        const raw = draft[key];
+        const bounds = (key === 'stubMin' || key === 'stubMax')
+            ? [key === 'stubMin' ? 0 : 1, 1000000]
+            : [0, 100000];
+        let n = clampInt(raw, bounds[0], bounds[1], thresholds[key]);
+
+        const next = { ...thresholds, [key]: n };
+        if (next.stubMin > next.stubMax) {
+            // Nudge the *other* bound to keep the range valid.
+            if (key === 'stubMin') next.stubMax = next.stubMin;
+            else                   next.stubMin = next.stubMax;
+        }
+        onChange({ ...config, thresholds: next });
+    };
 
     const addSubtrees = (items) => {
         const existing = new Set(subtrees.map(s => s.noteId));
@@ -944,6 +1173,75 @@ function ConfigPanel({ config, onChange }) {
                         : 'Empty list: full-tree scan.'}
                 </div>
             )}
+
+            <div class="kd-config-section">
+                <span class="kd-config-label">Categories shown</span>
+                <div class="kd-cat-toggles">
+                    {TABS.map(({ key, label, color, icon }) => {
+                        const on = categories[key] !== false;
+                        return (
+                            <span
+                                key={key}
+                                class={`kd-cat-toggle ${on ? 'on' : 'off'}`}
+                                style={{ '--kd-cat-color': color }}
+                                onClick={() => toggleCategory(key)}
+                                title={on ? `Hide ${label}` : `Show ${label}`}
+                                role="checkbox"
+                                aria-checked={on}
+                            >
+                                <span class="kd-cat-dot" />
+                                {icon} {label}
+                            </span>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div class="kd-config-section">
+                <span class="kd-config-label">Thresholds</span>
+                <div class="kd-thresholds">
+                    <div class={`kd-threshold${categories.stubs === false ? ' disabled' : ''}`}>
+                        <label>Stub min (chars)</label>
+                        <input
+                            type="number" min="0"
+                            value={draft.stubMin}
+                            onInput={(e) => onThresholdInput('stubMin', e.target.value)}
+                            onBlur={() => commitThreshold('stubMin')}
+                        />
+                    </div>
+                    <div class={`kd-threshold${categories.stubs === false ? ' disabled' : ''}`}>
+                        <label>Stub max (chars)</label>
+                        <input
+                            type="number" min="1"
+                            value={draft.stubMax}
+                            onInput={(e) => onThresholdInput('stubMax', e.target.value)}
+                            onBlur={() => commitThreshold('stubMax')}
+                        />
+                    </div>
+                    <div class={`kd-threshold${categories.todos === false ? ' disabled' : ''}`}>
+                        <label>TODO age (days)</label>
+                        <input
+                            type="number" min="0"
+                            value={draft.todoDays}
+                            onInput={(e) => onThresholdInput('todoDays', e.target.value)}
+                            onBlur={() => commitThreshold('todoDays')}
+                        />
+                    </div>
+                    <div class={`kd-threshold${categories.abandoned === false ? ' disabled' : ''}`}>
+                        <label>Abandoned age (days)</label>
+                        <input
+                            type="number" min="0"
+                            value={draft.abandonedDays}
+                            onInput={(e) => onThresholdInput('abandonedDays', e.target.value)}
+                            onBlur={() => commitThreshold('abandonedDays')}
+                        />
+                    </div>
+                </div>
+                <div class="kd-config-hint">
+                    Stubs match notes between min and max characters. TODO/Abandoned
+                    match notes unmodified longer than the given number of days.
+                </div>
+            </div>
         </div>
     );
 }
@@ -1051,6 +1349,15 @@ function KnowledgeDebtApp() {
     // Reset to first page when tab or search changes
     useEffect(() => { setPage(0); }, [activeTab, search]);
 
+    // If the active tab's category gets hidden, jump to the first visible one.
+    useEffect(() => {
+        const cats = config.categories || {};
+        if (cats[activeTab] === false) {
+            const firstVisible = TABS.find(t => cats[t.key] !== false);
+            if (firstVisible) setActiveTab(firstVisible.key);
+        }
+    }, [config.categories, activeTab]);
+
     const selectTab = useCallback((tab) => { setActiveTab(tab); }, []);
 
     // Notes the dashboard should never analyze (itself + its JSX + its config)
@@ -1064,10 +1371,12 @@ function KnowledgeDebtApp() {
 
     // Include mode with no subtrees would scan nothing — disable scan with a hint
     const includeEmpty = config.mode === 'include' && (!config.subtrees || config.subtrees.length === 0);
-    const scanDisabled = scanning || includeEmpty;
+    // All categories off also means nothing to scan.
+    const noCategories = TABS.every(t => (config.categories || {})[t.key] === false);
+    const scanDisabled = scanning || includeEmpty || noCategories;
 
     const onScan = useCallback(async () => {
-        if (scanning || includeEmpty) return;
+        if (scanning || includeEmpty || noCategories) return;
         setScanning(true);
         addLog('Starting analysis…');
         try {
@@ -1092,7 +1401,7 @@ function KnowledgeDebtApp() {
         } finally {
             setScanning(false);
         }
-    }, [scanning, includeEmpty, config, systemNoteIds, addLog]);
+    }, [scanning, includeEmpty, noCategories, config, systemNoteIds, addLog]);
 
     /* Derived: filtered items for the active tab */
     const filteredItems = useMemo(() => {
@@ -1166,7 +1475,9 @@ function KnowledgeDebtApp() {
                     disabled={scanDisabled}
                     title={includeEmpty
                         ? 'Include mode is empty — add a subtree to scan'
-                        : 'Run scan'}
+                        : noCategories
+                            ? 'All categories are hidden — enable at least one in Config'
+                            : 'Run scan'}
                 >
                     {scanning ? '…' : '▶ Scan'}
                 </button>
@@ -1177,7 +1488,7 @@ function KnowledgeDebtApp() {
             )}
 
             {hasScanned && (
-                <StatsBar data={data} activeTab={activeTab} onSelect={selectTab} maxResults={MAX_RESULTS} />
+                <StatsBar data={data} activeTab={activeTab} onSelect={selectTab} maxResults={MAX_RESULTS} categories={config.categories} />
             )}
 
             <div class="kd-table-wrap">
