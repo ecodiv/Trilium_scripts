@@ -1100,8 +1100,13 @@ function sortByOrder(tasks, order) {
 }
 
 function getOrderedBacklog(allTasks, plannerData, todayIso) {
-    const tasks = getBacklog(allTasks, plannerData, todayIso);
-    return sortByOrder(tasks, ((plannerData._order || {}).backlog) || []);
+    const tasks  = getBacklog(allTasks, plannerData, todayIso);
+    const order  = ((plannerData._order || {}).backlog) || [];
+    const overdue    = sortByOrder(tasks.filter(t =>  t.isOverdue), order);
+    const unplanned  = sortByOrder(tasks.filter(t => !t.isOverdue), order);
+    // Overdue tasks are always pinned above unplanned ones.
+    // Within each group the stored drag-drop order is respected.
+    return [...overdue, ...unplanned];
 }
 
 function getDayTasks(allTasks, plannerData, iso) {
@@ -2280,7 +2285,9 @@ function PlannerApp() {
     }, [scopeConfigKey, configLoaded]);
 
     /* Single-note rescan after mark-done/capture. Replaces that note's tasks
-       with freshly-scanned ones, keeping per-kind indices accurate. */
+       with freshly-scanned ones, keeping per-kind indices accurate.
+       Returns the fresh task list so callers (e.g. capture) can inspect
+       which task IDs were added. */
     const reloadNote = useCallback(async (noteId) => {
         try {
             const fresh = await fetchTasksForNote(noteId, { scanArchived });
@@ -2289,9 +2296,11 @@ function PlannerApp() {
                 return [...others, ...fresh];
             });
             setPlannerData(prev => applyDateSuffixes(fresh, prev));
+            return fresh;
         } catch (err) {
             console.error('reloadNote:', err);
             await reload();   // fall back to a full reload
+            return [];
         }
     }, [applyDateSuffixes, scanArchived, reload]);
 
@@ -2395,7 +2404,35 @@ function PlannerApp() {
             const dailyNote = await appendTodoToToday(rawText);
             // Re-scan only today's daily note for the newly-added task.
             if (dailyNote && dailyNote.noteId) {
-                await reloadNote(dailyNote.noteId);
+                // Snapshot existing IDs before the rescan so we can detect
+                // which task IDs are genuinely new after reloadNote runs.
+                const beforeIds = new Set(allTasksRef.current.map(t => t.id));
+                const fresh = await reloadNote(dailyNote.noteId);
+
+                // Find newly-added tasks that have no scheduled date
+                // (i.e. they will land in the backlog).
+                const newUnscheduledIds = (fresh || [])
+                    .filter(t => !beforeIds.has(t.id))
+                    .filter(t => !t.isoDate)   // @date suffix tasks go directly to a day
+                    .map(t => t.id);
+
+                if (newUnscheduledIds.length) {
+                    // Prepend each new ID at the front of the backlog order,
+                    // after any overdue tasks (those are pinned by getOrderedBacklog
+                    // and not stored at the top of _order.backlog — we simply
+                    // unshift into the stored array; the overdue-first rule in
+                    // getOrderedBacklog will keep them above regardless).
+                    setPlannerData(prev => {
+                        const backlogOrder = ((prev._order || {}).backlog || []).slice();
+                        // Remove if already present, then prepend.
+                        const withoutNew = backlogOrder.filter(id => !newUnscheduledIds.includes(id));
+                        const nextOrder = [...newUnscheduledIds, ...withoutNew];
+                        return {
+                            ...prev,
+                            _order: { ...(prev._order || {}), backlog: nextOrder },
+                        };
+                    });
+                }
             } else {
                 await reload();   // shouldn't happen, but fall back
             }
