@@ -5,6 +5,8 @@ A Thunderbird MailExtension that imports selected email messages into
 a searchable note per email, optionally preserves attachments and the original
 message, links the note to its daily note, and skips duplicates.
 
+> Disclaimer: Created with help of Claud.ai
+
 ## Features
 
 - Thunderbird toolbar action and message-list context menu.
