@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Send to Trilium",
+  "description": "Import Thunderbird messages into Trilium Notes with deduplication and daily-note linking.",
+  "version": "0.2.2",
+  "icons": {
+    "48": "logo.svg",
+    "96": "logo.svg"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{6a4d7cbe-1c9d-4ae6-8d6a-9c4b72bd7b1a}",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "messagesRead",
+    "menus",
+    "notifications",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "Send to Trilium",
+    "default_label": "Send to Trilium",
+    "default_icon": "logo.svg",
+    "allowed_spaces": [
+      "mail"
+    ],
+    "default_windows": [
+      "normal",
+      "messageDisplay"
+    ]
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

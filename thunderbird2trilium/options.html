@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Send to Trilium settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>Send to Trilium</h1>
+
+    <form id="settingsForm">
+      <label>
+        Trilium URL
+        <input id="triliumUrl" type="url" placeholder="http://localhost:37840" required>
+      </label>
+
+      <label>
+        ETAPI token
+        <input id="etapiToken" type="password" autocomplete="off" required>
+      </label>
+
+      <label>
+        Destination parent Note ID
+        <input id="parentNoteId" type="text" spellcheck="false" required>
+      </label>
+
+      <fieldset>
+        <legend>Imported content</legend>
+        <label class="check">
+          <input id="importAttachments" type="checkbox">
+          Import attachments as child file notes
+        </label>
+        <label class="check">
+          <input id="preserveEml" type="checkbox">
+          Preserve the original message as a child .eml file
+        </label>
+      </fieldset>
+
+      <label>
+        Message body
+        <select id="bodyFormat">
+          <option value="plain">Plain text</option>
+          <option value="html">Original formatting, embedded images only (sanitized HTML)</option>
+          <option value="html-images">Original formatting, allow remote images (sanitized HTML)</option>
+        </select>
+        <small>All HTML modes remove scripts and keep the email's embedded (inline) images. "Embedded images only" strips remote/external images (tracking pixels) and shows a placeholder, like a mail client blocking external content. "Allow remote images" also keeps external images, which load remote content when the note is viewed.</small>
+      </label>
+
+      <label>
+        Date handling
+        <select id="dateMode">
+          <option value="both">Daily note clone + date label</option>
+          <option value="daily">Daily note clone only</option>
+          <option value="attribute">Date label only</option>
+          <option value="none">Neither</option>
+        </select>
+      </label>
+
+      <label>
+        Date label name
+        <input id="dateLabel" type="text" value="emailDate" spellcheck="false" required>
+        <small>Stored as YYYY-MM-DD. Used when Date handling includes a label.</small>
+      </label>
+
+      <button type="submit">Save and test connection</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+
+    <p class="note">
+      The ETAPI token is stored in Thunderbird's extension storage on this profile. This build is configured for the local Trilium desktop instance on localhost or 127.0.0.1.
+    </p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
