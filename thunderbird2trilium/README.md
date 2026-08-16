@@ -1,4 +1,4 @@
-# Send to Trilium
+# <img width="50" src="logo.svg" > Send to Trilium
 
 A Thunderbird MailExtension that imports selected email messages into
 [Trilium Notes](https://github.com/TriliumNext/Notes) through ETAPI. It creates
