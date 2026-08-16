@@ -1,3 +1,10 @@
+// NOTE: the pure formatting/sanitizing/hashing helpers below (escapeHtml,
+// textToHtml, safeFilename, dateToLocalIso, sanitizeHtml and its helpers,
+// sha256Hex, and the import-key derivation) are mirrored in
+// ../shared/email-format.js, the canonical copy shared with the eml2trilium
+// Trilium widget. Neither host can import that file at runtime, so keep these in
+// sync with it by hand when changing them.
+
 const DEFAULT_SETTINGS = {
   triliumUrl: "",
   etapiToken: "",
@@ -580,7 +587,9 @@ async function importMessage(message, settings) {
 
   const emailNoteId = created.note.noteId;
 
+  await ensureLabel(settings, emailNoteId, "email", "", 1);
   await ensureLabel(settings, emailNoteId, "emailImportKey", importKey, 10);
+  await ensureLabel(settings, emailNoteId, "iconClass", "bx bx-envelope", 5);
   if (messageId) {
     await ensureLabel(settings, emailNoteId, "emailMessageId", messageId, 15);
   }
@@ -590,13 +599,14 @@ async function importMessage(message, settings) {
     for (const attachment of attachments) {
       try {
         const file = await messenger.messages.getAttachmentFile(message.id, attachment.partName);
-        await createFileNote(
+        const attachmentNoteId = await createFileNote(
           settings,
           emailNoteId,
           attachment.name || file.name || "attachment",
           attachment.contentType || file.type || "application/octet-stream",
           file
         );
+        await ensureLabel(settings, attachmentNoteId, "email_attachment", "", 10);
       } catch (error) {
         console.error("Could not import attachment:", attachment.name, error);
       }
@@ -608,13 +618,14 @@ async function importMessage(message, settings) {
       rawFile = await getRawMessageFile(message.id, subject);
     }
 
-    await createFileNote(
+    const emlNoteId = await createFileNote(
       settings,
       emailNoteId,
       `${safeFilename(subject)}.eml`,
       "message/rfc822",
       rawFile
     );
+    await ensureLabel(settings, emlNoteId, "file_type", "eml", 10);
   }
 
   return {

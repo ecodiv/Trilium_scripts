@@ -127,6 +127,11 @@ Emails
     └── Project proposal.eml
 ```
 
+The email note itself gets an `#email` label and an envelope icon
+(`#iconClass=bx bx-envelope`). Each attachment child gets an `#email_attachment`
+label and the preserved original message gets `#file_type=eml`, so you can find
+them with a search.
+
 ### Encrypted messages
 
 Encrypted emails (PGP/MIME or S/MIME) are skipped instead of being imported as

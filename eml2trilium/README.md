@@ -1,10 +1,10 @@
 # Import EML
 
-A [Trilium Notes](https://triliumnotes.org/) frontend script that imports `.eml`
-files (saved email messages) into your notes. It is the file-based companion to
-the [Send to Trilium](../thunderbird2trilium/README.md) Thunderbird add-on:
-emails you import from a file end up looking the same as emails sent straight
-from Thunderbird.
+A [Trilium Notes](https://triliumnotes.org/) launch-bar widget that imports
+`.eml` files (saved email messages) into your notes. Each email becomes a
+searchable note under the note you are viewing, with its attachments and the
+original message preserved, and re-importing the same email is recognised as a
+duplicate rather than stored twice.
 
 > Disclaimer: Created with help of Claude.ai
 
@@ -16,14 +16,20 @@ currently viewing**, containing:
 - the email subject as the note title;
 - sender, recipients and CC recipients;
 - the sent date and Message-ID;
-- the message body;
+- the message body with its original formatting and embedded images;
+- each attachment as a child note;
 - the original `.eml` file, kept as a child note.
 
 ```text
 (your active note)
 └── Project proposal
+    ├── proposal.pdf
+    ├── budget.xlsx
     └── Project proposal.eml
 ```
+
+The body is imported as sanitized HTML: scripts are removed and embedded (inline)
+images are kept, while remote/external images are stripped for privacy.
 
 ## Requirements
 
@@ -31,34 +37,73 @@ currently viewing**, containing:
 
 ## Setup
 
-1. Create a new note of type **JS frontend**.
-2. Open [`eml2trilium.js`](eml2trilium.js), copy its full contents into the note,
-   and save.
-3. Open the **Launch Bar** configuration, add a new **Script** launcher, point it
-   at the note you just created, and give it a name such as `Import EML`.
+1. Create a new note of type **JSX**.
+2. Open [`eml2trilium.jsx`](eml2trilium.jsx), copy its full contents into the
+   note, and save. Do **not** add a `#widget` label.
+3. Open the **Global menu → Configure launchbar**. Right click on the *Visible
+   Launchers* sectionn, choose **Add a custom widget**, and set its **widget**
+   field to the note you just created.
+4. Reload Trilium (`Ctrl+R`).
+
+An envelope button appears in the launch bar. 
 
 ## Importing an email
 
 1. Open the note you want the email(s) placed under.
-2. Click the **Import EML** launcher.
-3. Choose one or more `.eml` files. A message confirms how many were imported.
+2. Click the envelope button in the launch bar.
+3. Choose one or more `.eml` files. A message confirms how many were imported and
+   how many duplicates were skipped.
 
 To get an `.eml` file: most mail clients can save or export a message as `.eml`
-(in Thunderbird, right-click a message → **Save As**).
+(usually via a **Save As** or **Export** command on the message).
 
-## Current limitations
+## Options
 
-This first version keeps things deliberately simple. The message body is imported
-as text; the original `.eml` child note always preserves the complete, unmodified
-email. The following are planned for later versions:
+Configure the importer by adding labels to the **JSX note itself** (the note the
+launcher points at). All are optional; the defaults are shown in bold.
 
-- the body imported with its original formatting (sanitized HTML) and inline
-  images;
-- attachments imported as their own child notes;
-- duplicate detection, so re-importing an email (or importing one already saved
-  from Thunderbird) does not create a second copy;
-- optionally placing the email under the daily note for its sent date, and adding
-  a searchable `#emailDate` label.
+| Label | Values | Effect |
+| --- | --- | --- |
+| `#emlBodyFormat` | **`html`** / `html-images` / `plain` | How the message body is imported. |
+| `#emlImportAttachments` | **`true`** / `false` | Import attachments as child notes. |
+| `#emlPreserveEml` | **`true`** / `false` | Keep the original `.eml` as a child note. |
+| `#emlDateMode` | **`both`** / `label` / `daily` / `none` | Link the note to the date it was sent (see below). |
+| `#emlDateLabel` | name (**`emailDate`**) | Name of the date label when `#emlDateMode` adds one. |
+| `#emlIconClass` | Boxicons class (**`bx bx-envelope`**) | Tree icon given to each imported email note. |
+
+Body format:
+
+- **`html`** — sanitized HTML keeping the original formatting; embedded (inline)
+  images are shown, remote/external images are stripped for privacy.
+- `html-images` — same, but remote/external images are also kept and loaded.
+- `plain` — the message text only, no formatting or images.
+
+Date handling (`#emlDateMode`):
+
+- **`daily`** — clone the note under the [day note](https://docs.triliumnotes.org/)
+  for the date the email was sent.
+- `label` — add a `#emailDate=YYYY-MM-DD` label instead.
+- `both` — clone under the day note *and* add the label.
+- `none` — do neither.
+
+For example, to import bodies as plain text and skip attachments, add
+`#emlBodyFormat=plain` and `#emlImportAttachments=false` to the JSX note, then
+reload Trilium.
+
+Each imported email note gets an `#email` label; its child attachments each get
+an `#email_attachment` label, and the preserved original message gets
+`#file_type=eml`, so you can find them with a search. 
+
+If you are using the [weekplanner]() widget, the `#email` label will be picked
+up by the widget, and imported emails will appear in the *backlog* column of the
+planner dashboard.
+
+## Duplicate detection
+
+Each imported note gets an `#emailImportKey` label — the SHA-256 of the email's
+Message-ID (or of the raw message when it has none). Before creating a note the
+widget checks for an existing note with the same key, so re-importing the same
+email does not create a second copy.
 
 ## License
 
