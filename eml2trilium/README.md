@@ -31,6 +31,14 @@ currently viewing**, containing:
 The body is imported as sanitized HTML: scripts are removed and embedded (inline)
 images are kept, while remote/external images are stripped for privacy.
 
+> The way emails are imported is compatible with those imported using the
+> [Thunderbird2Trilium](https://github.com/ecodiv/Trilium_scripts/tree/main/thunderbird2trilium)
+> addon. That means that if you have imported an email using the Thunderbird
+> addon, and then try to import the same with this widget, it will be detected
+> as a duplicate. This is handy if you cannot run Thunderbird on all your
+> computers.
+
+
 ## Requirements
 
 - A TriliumNext installation.

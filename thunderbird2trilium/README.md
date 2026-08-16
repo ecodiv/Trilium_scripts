@@ -26,6 +26,13 @@ message, links the note to its daily note, and skips duplicates.
   note, add a date label such as `#emailDate=2026-08-15`, both, or neither.
 - Settings page for URL, ETAPI token, destination Note ID and behavior.
 
+> The way emails are imported is compatible with those imported using the
+> [eml2Trilium](https://github.com/ecodiv/Trilium_scripts/tree/main/eml2trilium)
+> addon. That means that if you have imported an email using the eml2trilium
+> widget, and then try to import the same with this addon, it will be detected
+> as a duplicate. This is handy if you cannot run Thunderbird on all your
+> computers.
+
 ## Requirements
 
 - Thunderbird 128 or newer.
