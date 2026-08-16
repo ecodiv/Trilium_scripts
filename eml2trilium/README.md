@@ -1,4 +1,4 @@
-# Import EML
+## <img width="50" src="logo.svg" /> EML2Trilium widget
 
 A [Trilium Notes](https://triliumnotes.org/) launch-bar widget that imports
 `.eml` files (saved email messages) into your notes. Each email becomes a
