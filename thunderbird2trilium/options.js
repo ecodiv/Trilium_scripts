@@ -1,5 +1,5 @@
 const DEFAULT_SETTINGS = {
-  triliumUrl: "",
+  triliumUrl: "http://localhost:37840",
   etapiToken: "",
   parentNoteId: "",
   importAttachments: true,
