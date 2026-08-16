@@ -5,6 +5,7 @@ This repository contains scripts for the awesome [Trilium Notes](https://trilium
 * [Weekly planner](https://github.com/ecodiv/Trilium_scripts/blob/main/weeklyplanner/README.md)
 * [Knowledge debt dashboard](https://github.com/ecodiv/Trilium_scripts/blob/main/knowledgedebt/README.md)
 * [Track hours](https://github.com/ecodiv/Trilium_scripts/blob/main/trackhours/README.md)
+* [Import EML](https://github.com/ecodiv/Trilium_scripts/blob/main/eml2trilium/README.md): Import `.eml` email files into the active note. File-based companion to the Thunderbird add-on below.
 
 ## Others
 
