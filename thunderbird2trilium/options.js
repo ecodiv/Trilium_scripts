@@ -6,7 +6,7 @@ const DEFAULT_SETTINGS = {
   preserveEml: true,
   bodyFormat: "plain",
   dateMode: "both",
-  dateLabel: "emailDate"
+  noteColor: ""
 };
 
 const form = document.getElementById("settingsForm");
@@ -41,7 +41,7 @@ async function loadSettings() {
   document.getElementById("preserveEml").checked = settings.preserveEml;
   document.getElementById("bodyFormat").value = settings.bodyFormat || "plain";
   document.getElementById("dateMode").value = settings.dateMode;
-  document.getElementById("dateLabel").value = settings.dateLabel || "emailDate";
+  document.getElementById("noteColor").value = settings.noteColor || "";
 }
 
 async function testEtapi(settings) {
@@ -84,12 +84,8 @@ form.addEventListener("submit", async event => {
       preserveEml: document.getElementById("preserveEml").checked,
       bodyFormat: document.getElementById("bodyFormat").value,
       dateMode: document.getElementById("dateMode").value,
-      dateLabel: document.getElementById("dateLabel").value.trim() || "emailDate"
+      noteColor: document.getElementById("noteColor").value.trim()
     };
-
-    if (!/^\S+$/.test(settings.dateLabel)) {
-      throw new Error("The date label name cannot contain whitespace.");
-    }
 
     validateLocalTriliumUrl(settings.triliumUrl);
 

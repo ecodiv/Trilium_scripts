@@ -52,17 +52,16 @@
       <label>
         Date handling
         <select id="dateMode">
-          <option value="both">Daily note clone + date label</option>
+          <option value="both">Daily note clone + calendar</option>
           <option value="daily">Daily note clone only</option>
-          <option value="attribute">Date label only</option>
+          <option value="calendar">Calendar only</option>
           <option value="none">Neither</option>
         </select>
       </label>
 
       <label>
-        Date label name
-        <input id="dateLabel" type="text" value="emailDate" spellcheck="false" required>
-        <small>Stored as YYYY-MM-DD. Used when Date handling includes a label.</small>
+        Note color
+        <input id="noteColor" type="text" spellcheck="false" placeholder="e.g. #3788d8 or teal">
       </label>
 
       <button type="submit">Save and test connection</button>

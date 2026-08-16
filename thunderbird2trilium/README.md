@@ -23,7 +23,9 @@ message, links the note to its daily note, and skips duplicates.
 - Duplicate detection using a SHA-256 import key derived from the Message-ID
   (or the raw message when the Message-ID is absent).
 - Configurable date handling: clone the note beneath the matching Trilium daily
-  note, add a date label such as `#emailDate=2026-08-15`, both, or neither.
+  note, add calendar labels (`#startDate`/`#startTime`) so it shows as a calendar
+  event, both, or neither.
+- Optionally give imported notes a color in the tree.
 - Settings page for URL, ETAPI token, destination Note ID and behavior.
 
 > The way emails are imported is compatible with those imported using the
@@ -149,9 +151,9 @@ unreadable notes. The completion summary reports how many were skipped.
 The add-on can associate the email with the date on which it was sent. Available
 options:
 
-- **Daily note clone + date label**
+- **Daily note clone + calendar**
 - **Daily note clone only**
-- **Date label only**
+- **Calendar only**
 - **Neither**
 
 ### Daily note clone
@@ -171,16 +173,26 @@ taken from the message's sent date and converted to `YYYY-MM-DD` in the
 computer's local timezone; ETAPI obtains or creates the day note and adds a
 branch for the email beneath it.
 
-### Date label
+### Calendar
 
-When enabled, the note receives a date attribute such as:
+When enabled, the note receives the calendar's native labels for the day and
+time the email was sent:
 
 ```text
-#emailDate=2026-08-15
+#startDate=2026-08-15
+#startTime=13:22
 ```
 
-This can be used later for Trilium searches, tables, scripts or other filtering.
-The label name is configurable in the settings.
+A Trilium calendar view then shows the email as an event at that moment. There
+is no `#endTime` (an email has no duration), so the calendar renders it as its
+default-length block. These labels are also useful for Trilium searches, tables
+and scripts.
+
+## Note color
+
+The settings page has an optional **Note color** field. Enter a CSS color (for
+example `#3788d8` or `teal`) and imported emails get a `#color` label so they
+stand out in the note tree. Leave it blank for no color.
 
 ## Duplicate detection
 
@@ -202,7 +214,7 @@ For normal use:
 ```text
 Import attachments:        enabled
 Preserve original .eml:    enabled
-Date handling:             Daily note clone + date label
+Date handling:             Daily note clone + calendar
 ```
 
 This gives you a central searchable email archive, access from the relevant
@@ -244,7 +256,7 @@ Attachments and original .eml are preserved
         ↓
 Same note appears under the corresponding daily note
         ↓
-#emailDate provides searchable date metadata
+#startDate / #startTime place it on the calendar and provide date metadata
 ```
 
 ## License

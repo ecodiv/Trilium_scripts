@@ -27,7 +27,6 @@
 export const LABELS = {
   importKey: "emailImportKey",
   messageId: "emailMessageId",
-  date: "emailDate",
 };
 
 export function escapeHtml(value) {
@@ -68,6 +67,19 @@ export function dateToLocalIso(value) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+// Local wall-clock time as "HH:MM" (24-hour) for the calendar #startTime label.
+// Returns null when the value is not a valid date, so callers can skip the label.
+export function localTimeHm(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

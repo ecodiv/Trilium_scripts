@@ -29,7 +29,7 @@
  *     Message-ID, or of the raw message when absent), so re-importing the same
  *     email is recognised as a duplicate instead of creating a second copy.
  *   - Optionally link the note to the date it was sent: clone it under that
- *     day's note and/or add a #emailDate label.
+ *     day's note and/or add #startDate/#startTime calendar labels.
  *
  * OPTIONS — set as labels on THIS note (the same note the launcher points at).
  * All optional; defaults in parentheses:
@@ -39,13 +39,14 @@
  *       html-images  = sanitized HTML, remote/external images also kept
  *   #emlImportAttachments=true|false         import attachments as children (true)
  *   #emlPreserveEml=true|false               keep the original .eml child   (true)
- *   #emlDateMode=daily|label|both|none       link to the sent date        (both)
- *       daily  = clone the note under that day's note
- *       label  = add a #emailDate=YYYY-MM-DD label
- *       both   = clone under the day note AND add the label
- *       none   = do neither
- *   #emlDateLabel=<name>                      date label name         (emailDate)
+ *   #emlDateMode=daily|calendar|both|none    link to the sent date        (both)
+ *       daily     = clone the note under that day's note
+ *       calendar  = add #startDate + #startTime so a calendar view shows it as
+ *                   an event (no #endTime; an email has no duration)
+ *       both      = clone under the day note AND add the calendar labels
+ *       none      = do neither
  *   #emlIconClass=<boxicons class>            imported note icon  (bx bx-envelope)
+ *   #emlColor=<css color>                 #color label for the note tree     ("")
  *
  * BACKEND API NOTE
  *   Note creation/search targets the current TriliumNext backend script API
@@ -59,7 +60,7 @@ import { runAsyncOnBackendWithManualTransactionHandling } from "trilium:api";
 
 // Label names written on imported email notes — kept in sync with the LABELS
 // export in shared/email-format.js.
-const LABELS = { importKey: "emailImportKey", messageId: "emailMessageId", date: "emailDate" };
+const LABELS = { importKey: "emailImportKey", messageId: "emailMessageId" };
 
 // Labels added to the child notes an import creates. Underscores (not hyphens):
 // Trilium sanitizes attribute names, replacing "-" with "_".
@@ -71,9 +72,9 @@ const DEFAULT_OPTIONS = {
   bodyFormat: "html",       // "plain" | "html" | "html-images"
   importAttachments: true,
   preserveEml: true,
-  dateMode: "both",        // "daily" | "label" | "both" | "none"
-  dateLabel: LABELS.date,
+  dateMode: "both",        // "daily" | "calendar" | "both" | "none"
   iconClass: "bx bx-envelope",   // Boxicons class shown as the note's tree icon
+  color: "",               // #color label (CSS color) for the note tree; "" = none
 };
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -520,7 +521,7 @@ async function deriveImportKey(messageId, bytes) {
 }
 
 // The sent date as a local YYYY-MM-DD string (for the day-note clone and the
-// #emailDate label), or null when the email has no valid Date header. Mirrors
+// #startDate label), or null when the email has no valid Date header. Mirrors
 // dateToLocalIso in shared/email-format.js but returns null instead of throwing.
 function emailIsoDate(dateHeader) {
   const date = dateHeader ? new Date(dateHeader) : null;
@@ -529,6 +530,17 @@ function emailIsoDate(dateHeader) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+// Local wall-clock "HH:MM" (24-hour) for the sent time, used for the calendar
+// #startTime label. Returns null when the Date header is missing or invalid.
+// Mirror of localTimeHm in shared/email-format.js.
+function emailLocalTime(dateHeader) {
+  const date = dateHeader ? new Date(dateHeader) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -576,12 +588,15 @@ function bytesToBase64(bytes) {
 // over nothing from module scope), as backend callbacks require.
 async function createEmailNote(payload) {
   return runAsyncOnBackendWithManualTransactionHandling(async (p) => {
-    // Link a note to the email's sent date: add the #emailDate label and/or
-    // clone the note under that day's note, per the dateMode option.
+    // Link the note to the date it was sent. "calendar" adds the calendar's
+    // native #startDate / #startTime labels (day + sent time; no #endTime, an
+    // email has no duration) so a calendar view shows it as an event. "daily"
+    // clones the note under the matching day note.
     const applyDateBehavior = (targetNote) => {
       if (!p.isoDate || !targetNote) return;
-      if (p.dateMode === "label" || p.dateMode === "both") {
-        targetNote.setLabel(p.dateLabel, p.isoDate);
+      if (p.dateMode === "calendar" || p.dateMode === "both") {
+        targetNote.setLabel("startDate", p.isoDate);
+        if (p.startTime) targetNote.setLabel("startTime", p.startTime);
       }
       if (p.dateMode === "daily" || p.dateMode === "both") {
         const dayNote = api.getDayNote(p.isoDate);
@@ -591,11 +606,16 @@ async function createEmailNote(payload) {
       }
     };
 
+    const applyColor = (targetNote) => {
+      if (p.color && targetNote) targetNote.setLabel("color", p.color);
+    };
+
     const existing = api.searchForNotes(`#${p.labels.importKey}="${p.importKey}"`);
     if (existing && existing.length) {
-      // Re-apply the date behavior so enabling day-note clones later can still
-      // place an already-imported email under the right day.
+      // Re-apply the date/color behavior so enabling these options later still
+      // updates an already-imported email.
       applyDateBehavior(existing[0]);
+      applyColor(existing[0]);
       return { status: "duplicate", noteId: existing[0].noteId, title: existing[0].title };
     }
 
@@ -638,6 +658,7 @@ async function createEmailNote(payload) {
     }
 
     applyDateBehavior(note);
+    applyColor(note);
 
     return { status: "imported", noteId: note.noteId, title: p.title };
   }, [payload]);
@@ -669,9 +690,9 @@ function readOptions() {
     bodyFormat: oneOf("emlBodyFormat", ["plain", "html", "html-images"], DEFAULT_OPTIONS.bodyFormat),
     importAttachments: bool("emlImportAttachments", DEFAULT_OPTIONS.importAttachments),
     preserveEml: bool("emlPreserveEml", DEFAULT_OPTIONS.preserveEml),
-    dateMode: oneOf("emlDateMode", ["daily", "label", "both", "none"], DEFAULT_OPTIONS.dateMode),
-    dateLabel: label("emlDateLabel") || DEFAULT_OPTIONS.dateLabel,
+    dateMode: oneOf("emlDateMode", ["daily", "calendar", "both", "none"], DEFAULT_OPTIONS.dateMode),
     iconClass: label("emlIconClass") || DEFAULT_OPTIONS.iconClass,
+    color: label("emlColor") || DEFAULT_OPTIONS.color,
   };
 }
 
@@ -712,8 +733,9 @@ async function importFile(file, parentNoteId, options) {
     emlBase64: options.preserveEml ? bytesToBase64(bytes) : "",
     emlFilename: `${safeFilename(title)}.eml`,
     dateMode: options.dateMode,
-    dateLabel: options.dateLabel,
     isoDate: emailIsoDate(eml.dateHeader),
+    color: options.color,
+    startTime: emailLocalTime(eml.dateHeader),
   });
 }
 

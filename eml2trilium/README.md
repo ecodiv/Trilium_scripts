@@ -75,9 +75,9 @@ launcher points at). All are optional; the defaults are shown in bold.
 | `#emlBodyFormat` | **`html`** / `html-images` / `plain` | How the message body is imported. |
 | `#emlImportAttachments` | **`true`** / `false` | Import attachments as child notes. |
 | `#emlPreserveEml` | **`true`** / `false` | Keep the original `.eml` as a child note. |
-| `#emlDateMode` | **`both`** / `label` / `daily` / `none` | Link the note to the date it was sent (see below). |
-| `#emlDateLabel` | name (**`emailDate`**) | Name of the date label when `#emlDateMode` adds one. |
+| `#emlDateMode` | **`both`** / `calendar` / `daily` / `none` | Link the note to the date it was sent (see below). |
 | `#emlIconClass` | Boxicons class (**`bx bx-envelope`**) | Tree icon given to each imported email note. |
+| `#emlColor` | CSS color (**empty**) | Add a `#color` label so imported emails stand out in the note tree. |
 
 Body format:
 
@@ -88,10 +88,13 @@ Body format:
 
 Date handling (`#emlDateMode`):
 
-- **`daily`** — clone the note under the [day note](https://docs.triliumnotes.org/)
+- `daily` — clone the note under the [day note](https://docs.triliumnotes.org/)
   for the date the email was sent.
-- `label` — add a `#emailDate=YYYY-MM-DD` label instead.
-- `both` — clone under the day note *and* add the label.
+- `calendar` — add the calendar's native `#startDate` and `#startTime` labels
+  (the day and time the email was sent) so a
+  [calendar view](https://docs.triliumnotes.org/) shows it as an event. There is
+  no `#endTime`, as an email has no duration.
+- **`both`** — clone under the day note *and* add the calendar labels.
 - `none` — do neither.
 
 For example, to import bodies as plain text and skip attachments, add

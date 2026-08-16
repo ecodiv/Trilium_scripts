@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   preserveEml: true,
   bodyFormat: "plain",
   dateMode: "both",
-  dateLabel: "emailDate"
+  noteColor: ""
 };
 
 async function getSettings() {
@@ -147,6 +147,19 @@ function dateToLocalIso(value) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+// Local wall-clock "HH:MM" for the calendar #startTime label. Returns null for
+// an invalid date. Mirror of localTimeHm in ../shared/email-format.js.
+function localTimeHm(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 const ENCRYPTED_CONTENT_TYPES = [
@@ -507,13 +520,29 @@ async function cloneIntoDailyNote(settings, noteId, isoDate) {
   return dayNote.noteId;
 }
 
-async function applyDateBehavior(settings, noteId, isoDate) {
-  if (settings.dateMode === "attribute" || settings.dateMode === "both") {
-    await ensureLabel(settings, noteId, settings.dateLabel || "emailDate", isoDate, 20);
+// Link the note to the date it was sent. The "calendar" part writes the
+// calendar's native #startDate / #startTime labels (day + sent time), so a
+// calendar view shows the email as an event; no #endTime, as an email has no
+// duration. The "daily" part clones the note under the matching day note.
+async function applyDateBehavior(settings, noteId, isoDate, sentDate) {
+  if (settings.dateMode === "calendar" || settings.dateMode === "both") {
+    await ensureLabel(settings, noteId, "startDate", isoDate, 20);
+    const startTime = localTimeHm(sentDate);
+    if (startTime) {
+      await ensureLabel(settings, noteId, "startTime", startTime, 21);
+    }
   }
 
   if (settings.dateMode === "daily" || settings.dateMode === "both") {
     await cloneIntoDailyNote(settings, noteId, isoDate);
+  }
+}
+
+// Optional #color label so imported emails stand out in the note tree.
+async function applyColor(settings, noteId) {
+  const color = String(settings.noteColor || "").trim();
+  if (color) {
+    await ensureLabel(settings, noteId, "color", color, 6);
   }
 }
 
@@ -539,7 +568,8 @@ async function importMessage(message, settings) {
 
   const duplicate = await findExistingImport(settings, importKey);
   if (duplicate) {
-    await applyDateBehavior(settings, duplicate.noteId, isoDate);
+    await applyDateBehavior(settings, duplicate.noteId, isoDate, message.date);
+    await applyColor(settings, duplicate.noteId);
     return {
       status: "duplicate",
       noteId: duplicate.noteId,
@@ -593,7 +623,8 @@ async function importMessage(message, settings) {
   if (messageId) {
     await ensureLabel(settings, emailNoteId, "emailMessageId", messageId, 15);
   }
-  await applyDateBehavior(settings, emailNoteId, isoDate);
+  await applyDateBehavior(settings, emailNoteId, isoDate, message.date);
+  await applyColor(settings, emailNoteId);
 
   if (settings.importAttachments) {
     for (const attachment of attachments) {
