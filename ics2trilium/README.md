@@ -4,7 +4,7 @@ A [Trilium Notes](https://triliumnotes.org/) launch-bar widget that imports
 `.ics` calendar files (meeting invitations and events) into your **journal**.
 Each event becomes a searchable note under the day note for its start date, with
 the meeting details and the calendar's native date/time labels so it shows up in
-a calendar view.
+a [calendar view](https://docs.triliumnotes.org/user-guide/collections/calendar).
 
 > Disclaimer: Created with help of Claude.ai
 
@@ -20,7 +20,7 @@ note placed under the day note (journal) for the event's start date, containing:
 - A **Description** section.
 
 Online-meeting join links (Microsoft Teams, Google Meet, or a plain `URL`) are
-pulled out as a clickable **Join** line, and any links or email addresses inside
+pulled out as a clickable 'Join' line, and any links or email addresses inside
 the description are made clickable — with long URLs shown by a short label — so
 the note stays compact instead of becoming a wall of text.
 
