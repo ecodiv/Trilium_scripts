@@ -48,7 +48,7 @@ Task Planner is a weekly planner for [Trilium Notes](https://triliumnotes.org/),
 
 Type e.g., `TODO buy milk` anywhere in a daily note, meeting note, or project note. The task appears in the planner. Drag it to a day column to schedule it. Mark it done from the planner, and the original source line is greyed out in place.
 
-The planner supports six inline task types: `TODO`, `IDEA`, `CHECK`, `DEFER`, `TOREAD`, and `EMAIL`. It also picks up whole notes tagged with `#todo` or `#email` as note tasks. You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
+The planner supports six inline task types: `TODO`, `IDEA`, `CHECK`, `DEFER`, `TOREAD`, and `EMAIL`. It also picks up whole notes as note tasks — either labelled `#todo`/`#email`, or tagged (`~tag`) with a `TODO`/`IDEA`/… tag note (as written by the companion tagging widget). You can schedule tasks by dragging them, or by adding date tokens such as `@today`, `@tomorrow`, `@fri`, or `@2026-05-20`.
 
 ![](images/overview.png)
 
@@ -135,14 +135,24 @@ Archived notes are included in the scan by default. To exclude archived notes, a
 
 ### Note tasks
 
-In addition to inline lines, the planner picks up entire notes that carry a `#todo` or `#email` Trilium label. The note's title becomes the task text. These **note tasks** appear on the board exactly like inline tasks, with two differences:
+In addition to inline lines, the planner promotes an entire note to a task in two ways. The note's title becomes the task text in both cases:
 
-- The bottom of the card shows `📌 note` (in muted italic) instead of the source note title, to indicate that the whole note is the task.
+1. **By label** — the note carries a `#todo` or `#email` Trilium label.
+2. **By tag** — the note is tagged (a `~tag` relation) with a tag note whose title is one of the six kinds: `TODO`, `IDEA`, `CHECK`, `TOREAD`, `DEFER`, or `EMAIL`. This is what the companion [tagging widget](../tagging/README.md) writes when you apply a `TODO`/`IDEA`/… tag, so anything you tag that way shows up here automatically. The kind title is matched case-insensitively, in any tag container / set.
+
+These **note tasks** appear on the board exactly like inline tasks, with two differences:
+
+- The bottom of the card shows `📌 note` (labelled notes) or `🏷️ tag` (tagged notes) in muted italic instead of the source note title, to indicate that the whole note is the task.
 - Clicking the card still opens the note, so you can read or edit its full content.
 
-**Marking done** sets the label value to `done` (e.g. `#todo=done`, `#email=done`) on the source note. The label stays on the note so it remains searchable, but the task disappears from the board. To reopen a completed note task, change the label value back to anything other than `done`.
+If a note is promoted both ways for the same kind (e.g. it has `#todo` *and* is tagged `TODO`), it shows a single card.
 
-**Recurring note tasks** work by setting the label value to an interval instead of leaving it empty:
+**Marking done** depends on how the note was promoted:
+
+- **Labelled notes** (`#todo`/`#email`): the label value is set to `done` (e.g. `#todo=done`). The label stays on the note so it remains searchable, but the task leaves the board. To reopen it, change the value back to anything other than `done`. If the note is *also* tagged with the same kind (e.g. `#todo` and `~tag=TODO`, which show as one card), that tag is removed as well so the task doesn't come back on the next scan.
+- **Tagged notes** (`~tag=TODO`): the `~tag` relation to that kind's tag note is removed, so the note is no longer tagged and leaves the board. Other tags on the note are kept. To bring it back, re-apply the tag (e.g. via the tagging widget).
+
+**Recurring note tasks** work by setting the *label* value to an interval instead of leaving it empty:
 
 | Label | Meaning |
 | --- | --- |
@@ -150,16 +160,16 @@ In addition to inline lines, the planner picks up entire notes that carry a `#to
 | `#todo=3d` | Repeat every 3 days |
 | `#email=2w` | Repeat every 2 weeks |
 
-The same recurrence rules apply as for inline tasks: completing (✓) advances the due date to the next future slot, the `↻` mark appears on the kind chip, and dragging reschedules from the dropped date. To stop recurrence, change the label value back to empty or remove it. To mark the note permanently done, set the value to `done`.
+The same recurrence rules apply as for inline tasks: completing (✓) advances the due date to the next future slot, the `↻` mark appears on the kind chip, and dragging reschedules from the dropped date. To stop recurrence, change the label value back to empty or remove it. To mark the note permanently done, set the value to `done`. Recurrence is a label feature only — a `~tag` relation carries no value, so tagged note tasks are always one-off.
 
-Note tasks respect the scope filter (⚙ panel): a note tagged `#todo` that lives in an excluded subtree will not appear on the board.
+Note tasks respect the scope filter (⚙ panel): a note that is labelled `#todo` or tagged `TODO` but lives in an excluded subtree will not appear on the board.
 
 > [!WARNING]
 > A task's planned day is linked to its generated task ID. Editing the first 48 characters of a task will make the planner treat it as a new task. That means the planned date is lost and the task returns to the backlog column.
 
 ### The day card
 
-Each task is rendered as a small card showing the kind chip in its colour, the task text, the `@date` suffix in light grey if one exists, any `#tags` as grey pills, and the source note title below. Note tasks (whole notes tagged `#todo` or `#email`) show `📌 note` in muted italic instead of the source note title.
+Each task is rendered as a small card showing the kind chip in its colour, the task text, the `@date` suffix in light grey if one exists, any `#tags` as grey pills, and the source note title below. Note tasks show `📌 note` (labelled `#todo`/`#email`) or `🏷️ tag` (tagged `TODO`/`IDEA`/…) in muted italic instead of the source note title.
 
 ![](images/day_card.png)
 

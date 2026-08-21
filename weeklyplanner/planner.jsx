@@ -17,6 +17,13 @@
  *     and run on the backend, so each must be SELF-CONTAINED (no closure over
  *     module-scope helpers). This is why some scan logic is intentionally
  *     duplicated between fetchAllTasks and fetchTasksForNote.
+ *   - Tasks come from three sources, merged on load/reload/compact: inline
+ *     line-prefixed tasks (fetchAllTasks), notes promoted by a label
+ *     (fetchAttributeTasks: #todo/#email), and notes promoted by a ~tag relation
+ *     to a kind-titled tag note (fetchRelationTasks: ~tag=TODO/IDEA/…, from the
+ *     tagging widget). The latter two are note-level (title = task text) and are
+ *     deduped by mergeNotePromotedTasks; relation tasks mark done by removing the
+ *     ~tag relation (markRelationTaskDone), attribute tasks by setting =done.
  *   - Mark-done rewrites the source line to a greyed DONE span; the colour
  *     (THEME_DEFAULTS.colorDoneText) is written into note content and so must
  *     stay a literal, never a CSS variable.
@@ -46,6 +53,14 @@ const KIND_RE_SOURCE = `(?:${KIND_KEYS.join('|')})`;
 /* Trilium attribute labels that promote a note itself into a task.
    The note title becomes the task text; no inline line is involved. */
 const ATTRIBUTE_TASK_LABELS = ['todo', 'email'];
+
+/* A note also becomes a task when it carries a ~tag relation to a tag note whose
+   title matches a kind (e.g. ~tag=TODO, ~tag=IDEA). This is the relation-based
+   counterpart of ATTRIBUTE_TASK_LABELS: same note-level promotion (title becomes
+   the task text), but keyed off the tagging widget's ~tag relations rather than a
+   label, and covering every kind rather than just todo/email. RELATION_TAG_NAME
+   is the relation name the tagging widget writes. */
+const RELATION_TAG_NAME = 'tag';
 
 /* CSS named colors we accept for a bare-word override. The browser knows many
    more, but an allowlist is safer than `^[a-z]+$` (which would pass arbitrary
@@ -752,6 +767,143 @@ async function fetchAttributeTasks({
     });
 }
 
+/* Find notes tagged (via the tagging widget's ~tag relation) with a tag note
+   whose title is a kind — ~tag=TODO, ~tag=IDEA, … Each such note yields one task
+   of that kind whose text is the note title, exactly like an attribute task.
+   Kinds are matched case-insensitively against the tag note's title, so a tag
+   note titled "TODO" (in any tag container / set) promotes the notes it tags.
+   Relations carry no value, so these tasks are always one-off (no recurrence),
+   and mark-done removes the relation (see markRelationTaskDone). */
+async function fetchRelationTasks({
+    scanArchived = SCAN_ARCHIVED_DEFAULT,
+    config = DEFAULT_PLANNER_CONFIG,
+    systemNoteIds = [],
+} = {}) {
+    const cfgMode = config.mode === 'include' ? 'include' : 'exclude';
+    const cfgSubtreeRoots = (config.subtrees || []).map(s => s.noteId).filter(Boolean);
+    const kindKeys = KIND_KEYS;
+
+    /* Self-contained backend callback (no closure over module helpers), mirroring
+       fetchAttributeTasks. Reads the attributes table directly for ~tag relations
+       because there is no high-level "notes whose relation target has title X". */
+    const rows = await runOnBackend((
+        kinds, relName, includeArchived,
+        mode, subtreeRoots, sysNoteIds
+    ) => {
+        function sqlList(arr) {
+            return arr.map(v => "'" + String(v).replace(/'/g, "''") + "'").join(',');
+        }
+
+        /* BFS subtree expansion — reused from fetchAttributeTasks. */
+        function expandSubtrees(rootIds) {
+            const expanded = new Set();
+            if (!rootIds || !rootIds.length) return expanded;
+            let frontier = rootIds.filter(Boolean);
+            for (const id of frontier) expanded.add(id);
+            for (let depth = 0; depth < 50 && frontier.length; depth++) {
+                const children = api.sql.getRows(
+                    `SELECT DISTINCT noteId FROM branches
+                     WHERE parentNoteId IN (${sqlList(frontier)}) AND isDeleted = 0`
+                );
+                const next = [];
+                for (const r of children) {
+                    if (!expanded.has(r.noteId)) { expanded.add(r.noteId); next.push(r.noteId); }
+                }
+                frontier = next;
+            }
+            return expanded;
+        }
+
+        const scopeSet = expandSubtrees(subtreeRoots);
+        const sysSet   = new Set(sysNoteIds || []);
+        const inScope = (noteId) => {
+            if (sysSet.has(noteId)) return false;
+            if (!scopeSet.size) return true;
+            return mode === 'include' ? scopeSet.has(noteId) : !scopeSet.has(noteId);
+        };
+
+        /* Tag notes whose title is a kind → map their noteId to the kind. */
+        const kindsUpper = kinds.map(k => k.toUpperCase());
+        const tagNotes = api.sql.getRows(
+            "SELECT noteId, title FROM notes " +
+            "WHERE isDeleted = 0 AND UPPER(title) IN (" + sqlList(kindsUpper) + ")"
+        );
+        const tagIdToKind = {};
+        for (const t of tagNotes) {
+            const up = (t.title || '').toUpperCase();
+            if (kindsUpper.indexOf(up) !== -1) tagIdToKind[t.noteId] = up;
+        }
+        const tagIds = Object.keys(tagIdToKind);
+        if (!tagIds.length) return [];
+
+        /* Notes carrying a ~tag relation to one of those tag notes. */
+        const relRows = api.sql.getRows(
+            "SELECT noteId, value FROM attributes " +
+            "WHERE isDeleted = 0 AND type = 'relation' AND name = '" + relName + "' " +
+            "AND value IN (" + sqlList(tagIds) + ")"
+        );
+
+        const seen   = new Set();   // noteId::kind — a note tagged TODO twice appears once
+        const result = [];
+        for (const r of relRows) {
+            const kind = tagIdToKind[r.value];
+            if (!kind) continue;
+            const key = r.noteId + '::' + kind;
+            if (seen.has(key)) continue;
+            const note = api.getNote(r.noteId);
+            if (!note || note.isDeleted || note.isProtected) continue;
+            if (!includeArchived && note.hasLabel('archived')) continue;
+            if (!inScope(r.noteId)) continue;
+            seen.add(key);
+            result.push({
+                noteId:    r.noteId,
+                title:     note.title || '(no title)',
+                kind,
+                tagNoteId: r.value,
+            });
+        }
+        return result;
+    }, [kindKeys, RELATION_TAG_NAME, scanArchived, cfgMode, cfgSubtreeRoots, systemNoteIds]);
+
+    return rows.map(r => {
+        const text = r.title;
+        const meta = parseTaskMeta(text);
+        const idText = text.trim().replace(/\s+/g, '_').slice(0, 48);
+        /* Distinct id segment keeps these from colliding with inline (::KIND::)
+           and attribute (::ATTR::) task ids from the same note. */
+        const id = `${r.noteId}::TAG::${r.kind}::${idText}`;
+        return {
+            id,
+            kind:            r.kind,
+            text,
+            tags:            meta.tags,
+            isoDate:         meta.isoDate,
+            interval:        null,      // relations carry no cadence token
+            indexForKind:    0,
+            noteId:          r.noteId,
+            noteTitle:       r.title,
+            isAttributeTask: true,      // note-level: no inline line to rewrite
+            isRelationTask:  true,      // mark-done removes the ~tag relation
+            tagNoteId:       r.tagNoteId,
+        };
+    });
+}
+
+/* Merge the two note-level task sources (attribute + relation), dropping a
+   relation task when the same note already yields an attribute task of the same
+   kind — so a note carrying both #todo and ~tag=TODO shows a single card. Inline
+   tasks are line-based and never deduped against these. */
+function mergeNotePromotedTasks(attrTasks, relTasks) {
+    const seen = new Set(attrTasks.map(t => `${t.noteId}::${t.kind}`));
+    const rel = relTasks.filter(t => {
+        const key = `${t.noteId}::${t.kind}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+    return [...attrTasks, ...rel];
+}
+
 /* For state compaction: the set of note ids we could fully read (non-deleted,
    non-protected text notes) and the set of all note ids that still exist.
    Together with a full task scan, these let us prune only TRUE orphans —
@@ -885,16 +1037,40 @@ async function markTaskDone(task, doneTextColor, expectedText) {
 /* Mark an attribute task done by setting its label value to 'done'
    (e.g. #todo -> #todo=done, #email -> #email=done).
    The label stays on the note so it remains findable; the scan query
-   excludes value='done' so it no longer appears as an open task. */
+   excludes value='done' so it no longer appears as an open task.
+   If the same note also carries a same-kind ~tag relation (e.g. #todo AND
+   ~tag=TODO — deduped to this one card), that relation is removed too, so the
+   note doesn't bounce back as a tag task on the next scan. */
 async function markAttributeTaskDone(task) {
     await runAsyncOnBackendWithManualTransactionHandling(
-        async (noteId, attrLabel) => {
+        async (noteId, attrLabel, kind, relName) => {
             const note = api.getNote(noteId);
             if (!note) return;
             await note.setLabel(attrLabel, 'done');
+            // Drop any ~tag relation to a tag note whose title is this kind.
+            const targets = note.getRelations(relName)
+                .filter(rel => rel.targetNote && (rel.targetNote.title || '').toUpperCase() === kind)
+                .map(rel => rel.value);
+            for (const tagNoteId of targets) note.removeRelation(relName, tagNoteId);
             await note.save();
         },
-        [task.noteId, task.attrLabel]
+        [task.noteId, task.attrLabel, task.kind, RELATION_TAG_NAME]
+    );
+}
+
+/* Mark a relation task done by removing its ~tag relation to the kind tag note.
+   The tag is the task marker, so completing it un-tags the note and it drops off
+   the board (re-tag via the tagging widget to bring it back). removeRelation is
+   scoped to the specific target so other ~tag relations on the note are kept. */
+async function markRelationTaskDone(task) {
+    await runAsyncOnBackendWithManualTransactionHandling(
+        async (noteId, relName, tagNoteId) => {
+            const note = api.getNote(noteId);
+            if (!note) return;
+            note.removeRelation(relName, tagNoteId);
+            await note.save();
+        },
+        [task.noteId, RELATION_TAG_NAME, task.tagNoteId]
     );
 }
 
@@ -1683,9 +1859,11 @@ function TaskCard({ task, progress, overrides, draggable, onClick, onContextMenu
                 )}
                 {renderTaskText(task.text)}
             </div>
-            {task.isAttributeTask
-                ? <div class="pl-task-note pl-task-note-attr">📌 note</div>
-                : <div class="pl-task-note">{task.noteTitle}</div>
+            {task.isRelationTask
+                ? <div class="pl-task-note pl-task-note-attr">🏷️ tag</div>
+                : task.isAttributeTask
+                    ? <div class="pl-task-note pl-task-note-attr">📌 note</div>
+                    : <div class="pl-task-note">{task.noteTitle}</div>
             }
             <div
                 class="pl-task-progress"
@@ -2161,11 +2339,12 @@ function PlannerApp() {
                         config: loadedCfg,
                         systemNoteIds: [...new Set(sysIds)],
                     };
-                    const [inlineTasks, attrTasks] = await Promise.all([
+                    const [inlineTasks, attrTasks, relTasks] = await Promise.all([
                         fetchAllTasks(opts),
                         fetchAttributeTasks(opts),
+                        fetchRelationTasks(opts),
                     ]);
-                    tasks = [...inlineTasks, ...attrTasks];
+                    tasks = [...inlineTasks, ...mergeNotePromotedTasks(attrTasks, relTasks)];
                 }
                 setAllTasks(tasks);
                 setPlannerData(applyDateSuffixes(tasks, data));
@@ -2235,11 +2414,12 @@ function PlannerApp() {
                 setAllTasks([]);   // nothing to scan; preserve JSON state
                 return;
             }
-            const [inlineTasks, attrTasks] = await Promise.all([
+            const [inlineTasks, attrTasks, relTasks] = await Promise.all([
                 fetchAllTasks({ scanArchived, config, systemNoteIds }),
                 fetchAttributeTasks({ scanArchived, config, systemNoteIds }),
+                fetchRelationTasks({ scanArchived, config, systemNoteIds }),
             ]);
-            const tasks = [...inlineTasks, ...attrTasks];
+            const tasks = [...inlineTasks, ...mergeNotePromotedTasks(attrTasks, relTasks)];
             setAllTasks(tasks);
             setPlannerData(prev => applyDateSuffixes(tasks, prev));
         } catch (err) {
@@ -2355,7 +2535,12 @@ function PlannerApp() {
         });
 
         try {
-            if (task.isAttributeTask) {
+            if (task.isRelationTask) {
+                // Remove the ~tag relation to the kind tag note (checked before
+                // isAttributeTask, which relation tasks also set). Note-level, so
+                // no inline rewrite or rescan — it's already off the board.
+                await markRelationTaskDone(task);
+            } else if (task.isAttributeTask) {
                 // Set #<label>=done on the note (e.g. #todo=done, #email=done).
                 // No inline rewrite or rescan needed — the label change is the
                 // only thing that happens, and the task is already off the board.
@@ -2719,12 +2904,13 @@ function PlannerApp() {
         setCompacting(true);
         try {
             const compactOpts = { scanArchived: true, config: { mode: 'exclude', subtrees: [] }, systemNoteIds };
-            const [inlineTasks, attrTasks, sets] = await Promise.all([
+            const [inlineTasks, attrTasks, relTasks, sets] = await Promise.all([
                 fetchAllTasks(compactOpts),
                 fetchAttributeTasks(compactOpts),
+                fetchRelationTasks(compactOpts),
                 fetchNoteIdSets(),
             ]);
-            const liveTasks = [...inlineTasks, ...attrTasks];
+            const liveTasks = [...inlineTasks, ...mergeNotePromotedTasks(attrTasks, relTasks)];
             const { data, removed } = compactPlannerData(plannerData, {
                 liveIds: new Set(liveTasks.map(t => t.id)),
                 readableNoteIds: sets.readableNoteIds,

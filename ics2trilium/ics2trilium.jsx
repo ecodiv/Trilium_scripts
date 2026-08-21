@@ -84,6 +84,23 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+// Decode HTML entities (&nbsp;, &lt;, &amp;, …) to real characters. Some
+// exporters -- notably Outlook on the web -- strip the tags from an event's HTML
+// body to build the plain-text DESCRIPTION but leave the entities encoded, so the
+// TEXT value literally contains "&nbsp;", "&lt;", etc. Left as-is they would be
+// HTML-escaped again when the note is built and show up as visible "&nbsp;"
+// markup. This runs in the Trilium frontend (DOM available); a <textarea> decodes
+// entities without executing anything, and the result is re-escaped by escapeHtml
+// before it reaches the note, so no HTML injection is introduced. A no-op for the
+// clean plain-text descriptions other clients (e.g. Thunderbird) produce.
+function decodeHtmlEntities(text) {
+  const str = String(text ?? "");
+  if (!str.includes("&")) return str;
+  const el = document.createElement("textarea");
+  el.innerHTML = str;
+  return el.value;
+}
+
 const pad2 = (n) => String(n).padStart(2, "0");
 
 // TEXT-value rendering: a multi-line description becomes paragraphs, with single
@@ -304,9 +321,9 @@ function extractEvents(text) {
     if (!name) continue;
 
     switch (name) {
-      case "SUMMARY": current.summary = unescapeText(value); break;
-      case "DESCRIPTION": current.description = unescapeText(value); break;
-      case "LOCATION": current.location = unescapeText(value); break;
+      case "SUMMARY": current.summary = decodeHtmlEntities(unescapeText(value)); break;
+      case "DESCRIPTION": current.description = decodeHtmlEntities(unescapeText(value)); break;
+      case "LOCATION": current.location = decodeHtmlEntities(unescapeText(value)); break;
       case "UID": current.uid = value.trim(); break;
       case "STATUS": current.status = value.trim(); break;
       case "DTSTART": current.start = parseIcsDate(value, params); break;
