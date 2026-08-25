@@ -76,6 +76,7 @@ import {
   useRef,
   defineWidget,
   useNoteContext,
+  useNoteLabelByName,
   RightPanelWidget,
 } from "trilium:preact";
 import { runAsyncOnBackendWithManualTransactionHandling } from "trilium:api";
@@ -372,6 +373,15 @@ function TaggingToolbar() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const rootRef = useRef(null);
+
+  // Re-render when the labels that drive the widget change on the current note,
+  // so it appears/updates the moment you add the activation label (or change the
+  // tag set / archive it) — without a manual reload. These hooks subscribe to
+  // Trilium's attribute-change events; their return values are read via
+  // hasLabel/getLabelValue below, which also see inherited labels.
+  useNoteLabelByName(note, OPTIONS.activationLabel);
+  useNoteLabelByName(note, "archived");
+  useNoteLabelByName(note, "tagSet");
 
   const enabled =
     !!note && note.hasLabel(OPTIONS.activationLabel) && !note.hasLabel("archived");
