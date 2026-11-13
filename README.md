@@ -7,6 +7,7 @@ This repository contains scripts for the awesome [Trilium Notes](https://trilium
 * [Track hours](https://github.com/ecodiv/Trilium_scripts/blob/main/trackhours/README.md)
 * [Import EML](https://github.com/ecodiv/Trilium_scripts/blob/main/eml2trilium/README.md): Import `.eml` email files (saved email messages) into the active note, with attachments, duplicate detection and day-note linking.
 * [Import ICS](https://github.com/ecodiv/Trilium_scripts/blob/main/ics2trilium/README.md): Import `.ics` calendar files (meeting invitations) into your journal, with organizer/attendees/description sections, calendar date-time labels and duplicate detection.
+* [CV builder](https://github.com/ecodiv/Trilium_scripts/blob/main/cvbuilder/README.md): Keep your CV content once in a Trilium subtree and build tailored variants (sections, order, filters, language, focus) as HTML/PDF, [RenderCV](https://github.com/rendercv/rendercv) YAML or JSON Resume, with three templates and Zotero (CSL JSON) import for publications.
 
 ## Others
 
