@@ -4,9 +4,7 @@
  * All CV content lives once in a subtree (root note labelled #cvRoot): a profile
  * note, section notes holding entry notes, and variant notes that select, filter
  * and order sections. For a chosen variant the widget builds:
- *   - an HTML CV (live preview, print / save as PDF, save as .html);
- *   - a RenderCV YAML file (render with `rendercv render <file>.yaml`);
- *   - a JSON Resume file (for JSON Resume themes / tools; lossy, see below).
+ *   an HTML CV with a live preview, print / save as PDF, and save as .html.
  *
  * Author: Paulo van Breugel
  * Disclaimer: Claude.ai was used to create this script
@@ -15,8 +13,9 @@
  *   1. Create a code note of type "JS frontend" and paste this whole file in.
  *   2. Add the label #widget to that note.
  *   3. Reload Trilium (Ctrl+R). On first load a "CV" tree with example content
- *      and three templates is created under this script note (see "First-run
- *      setup"). Open that note: it shows a "Build CV…" button at the top.
+ *      is created under this script note (see "First-run setup"). Open that
+ *      note: it shows a "Build CV…" button at the top. Add templates with
+ *      "Import template…" (see "Template import").
  *
  * DATA MODEL (labels; names use underscores, Trilium turns "-" into "_")
  *   #cvRoot                      root of the CV subtree (first match is used)
@@ -31,7 +30,6 @@
  *   #cvSection #cvKey=<key>      section; note title = section title
  *       #entryType=experience|education|normal|text|bullet|oneline
  *       #cvTitle_<lang>=<title>  translated section title
- *       #jsonResume=work|education|projects|publications|skills|…
  *       body = optional intro text shown above the entries
  *   entry notes (children of a section, in tree order)
  *       experience: #position #company #location #start #end | #date
@@ -60,12 +58,8 @@
  *   Dates: "YYYY", "YYYY-MM" or "YYYY-MM-DD"; #end=present for ongoing.
  *
  * GOTCHAS
- *   - RenderCV requires every entry in one section to have the same type; the
- *     section's #entryType decides, entries do not set their own type.
- *   - RenderCV validates phone numbers, URLs and dates strictly; build errors
- *     there show up when running rendercv, not in this widget.
- *   - JSON Resume has a fixed set of keys; sections without a #jsonResume
- *     mapping are skipped there, and themes decide section order.
+ *   - All entries in a section share the section's #entryType; entries do not
+ *     set their own type.
  *   - Backend callbacks must be self-contained (no closure over module scope).
  */
 
@@ -76,14 +70,12 @@
 
 const LOCALES = {
   en: {
-    rendercv: "english",
     present: "Present",
     months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
     profile: "Profile",
     contact: "Contact",
   },
   nl: {
-    rendercv: "dutch",
     present: "heden",
     months: ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"],
     profile: "Profiel",
@@ -91,8 +83,7 @@ const LOCALES = {
   },
 };
 
-// RenderCV social network names (exact spelling required by RenderCV) per
-// profile label, plus the URL used for HTML / JSON Resume.
+// Profile labels for social profiles: display name and profile URL.
 const SOCIAL = {
   github: { network: "GitHub", url: (u) => `https://github.com/${u}` },
   gitlab: { network: "GitLab", url: (u) => `https://gitlab.com/${u}` },
@@ -525,7 +516,6 @@ function buildModel(tree, spec) {
     return {
       key, slot, kind: "entries", type,
       title: pickTitle(sec.title, lang) || l.labels[`cvTitle_${lang}`] || rec.title,
-      jsonResume: l.labels.jsonResume || null,
       intro: sec.intro === false ? [] : l.blocks.paragraphs,
       entries,
       groups,
@@ -716,185 +706,6 @@ ${side.length ? `<aside class="cv-sidebar">${photo}${side.map((s) => renderSecti
 </body></html>`;
 }
 
-
-/* ────────────────────────────────────────────────────────────────────────────
- * RenderCV YAML output
- * ────────────────────────────────────────────────────────────────────────── */
-
-// Tiny YAML emitter: block mappings/sequences, scalars as JSON strings (valid
-// YAML double-quoted scalars). null/undefined/empty values are dropped.
-function toYaml(value, indent = 0) {
-  const pad = " ".repeat(indent);
-  const scalar = (v) => (typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(String(v)));
-  const key = (k) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) ? k : JSON.stringify(k));
-  const empty = (v) => v == null || v === "" || (Array.isArray(v) && !v.length);
-  if (Array.isArray(value)) {
-    return value.map((item) => {
-      if (item && typeof item === "object") {
-        const body = toYaml(item, indent + 2).replace(/^\s+/, "");
-        return `${pad}- ${body}`;
-      }
-      return `${pad}- ${scalar(item)}`;
-    }).join("\n");
-  }
-  if (value && typeof value === "object") {
-    return Object.entries(value).filter(([, v]) => !empty(v)).map(([k, v]) => {
-      if (v && typeof v === "object") {
-        if (!Array.isArray(v) && !Object.values(v).some((x) => !empty(x))) return null;
-        return `${pad}${key(k)}:\n${toYaml(v, indent + 2)}`;
-      }
-      return `${pad}${key(k)}: ${scalar(v)}`;
-    }).filter(Boolean).join("\n");
-  }
-  return pad + scalar(value);
-}
-
-function rcvDates(e) {
-  if (e.date) return { date: e.date };
-  if (e.start && (!e.end || e.end === e.start)) return { date: e.start };
-  return { start_date: e.start || undefined, end_date: e.end ? e.end.toLowerCase() : undefined };
-}
-
-function rcvEntry(e) {
-  const f = e.fields;
-  const summary = e.summary || undefined;
-  const highlights = e.highlights.length ? e.highlights : undefined;
-  switch (e.type) {
-    case "experience":
-      // RenderCV requires both company and position (empty values are dropped
-      // by toYaml). Without a company the position takes the company slot and
-      // the location moves into the position line.
-      if (!f.company) {
-        return { company: f.position || e.title, position: f.location || "-", ...rcvDates(e), summary, highlights };
-      }
-      return { company: f.company, position: f.position || e.title, location: f.location, ...rcvDates(e), summary, highlights };
-    case "education":
-      return { institution: f.institution || e.title, area: f.area || f.title || e.title, degree: f.degree, location: f.location, ...rcvDates(e), summary, highlights };
-    case "normal":
-      return { name: f.name || e.title, location: f.location, ...rcvDates(e), summary, highlights };
-    case "oneline":
-      return { label: f.name || e.title, details: e.paragraphs.join(" ") || e.highlights.join(", ") };
-    case "bullet":
-      return { bullet: [...e.paragraphs, ...e.highlights].join(" ") };
-    default:
-      return [...e.paragraphs, ...e.highlights.map((h) => `- ${h}`)].join("\n");
-  }
-}
-
-function renderRenderCv(model) {
-  const { person, spec, loc } = model;
-  const rcv = spec.rendercv || {};
-  const sections = {};
-  for (const sec of model.sections) {
-    if (sec.kind === "contact") continue; // contact goes into the header
-    // Intro paragraphs and group headings become text entries, which RenderCV
-    // only allows in sections made of text entries. Other section types get
-    // one RenderCV section per group instead ("Title – Group").
-    const textual = sec.type === "text" || sec.kind === "profile";
-    const splitGroups = sec.groups && (!textual || rcv.groups === "sections");
-    if (splitGroups) {
-      if (textual && sec.intro.length) sections[sec.title] = [...sec.intro];
-      for (const g of sec.groups) sections[g.title ? `${sec.title} – ${g.title}` : sec.title] = g.entries.map(rcvEntry);
-      continue;
-    }
-    const body = sec.groups
-      ? sec.groups.flatMap((g) => [...(g.title ? [`**${g.title}**`] : []), ...g.entries.map(rcvEntry)])
-      : sec.entries.map(rcvEntry);
-    const usable = textual ? [...sec.intro, ...body] : body;
-    if (usable.length) sections[sec.title] = usable;
-  }
-  const doc = {
-    cv: {
-      name: person.name,
-      headline: person.headline,
-      location: person.location,
-      email: person.email,
-      phone: person.phone,
-      photo: person.photo && rcv.photo !== false ? rcv.photo || person.photo.filename : undefined,
-      social_networks: person.social.map((s) => ({ network: s.network, username: s.username })),
-      custom_connections: person.links.map((l) => ({ fontawesome_icon: l.icon, placeholder: l.text, url: l.url })),
-      sections,
-    },
-    design: rcv.design || { theme: "classic" },
-    locale: { language: loc.rendercv, ...(rcv.locale || {}) },
-  };
-  const settings = { ...(rcv.settings || {}) };
-  if (spec.highlight && spec.highlight.length && !settings.bold_keywords) settings.bold_keywords = spec.highlight;
-  if (Object.keys(settings).length) doc.settings = settings;
-  return `# Generated by cv-builder (Trilium) — edit the CV notes, not this file.\n${toYaml(doc)}\n`;
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * JSON Resume output
- * ────────────────────────────────────────────────────────────────────────── */
-
-const mdPlain = (md) => String(md || "")
-  .replace(/\\([*`[\]\\])/g, (m, c) => MD_ESC[c])
-  .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*`]/g, "")
-  .replace(/[\uE000-\uE004]/g, (c) => MD_UNESC[c]);
-const jrDate = (v) => (v && !/^present$/i.test(v) ? String(v) : undefined);
-
-function jrEntry(kind, e) {
-  const f = e.fields;
-  const text = mdPlain([...e.paragraphs, ...e.highlights].join(" "));
-  const start = jrDate(e.start || e.date);
-  const end = e.end && /^present$/i.test(e.end) ? undefined : jrDate(e.end);
-  switch (kind) {
-    case "work":
-    case "volunteer":
-      return { name: f.company || f.position || e.title, organization: f.company, position: f.position || e.title, location: f.location, startDate: start, endDate: end, summary: e.summary ? mdPlain(e.summary) : undefined, highlights: e.highlights.map(mdPlain) };
-    case "education":
-      return { institution: f.institution, area: f.area, studyType: f.title || f.degree, startDate: start, endDate: end, courses: e.highlights.map(mdPlain) };
-    case "projects":
-      return { name: f.company || f.name || e.title, roles: f.position ? [f.position] : undefined, description: e.summary ? mdPlain(e.summary) : undefined, highlights: e.highlights.map(mdPlain), startDate: start, endDate: end, url: f.url };
-    case "publications":
-      return { name: f.pubTitle || text, publisher: f.publisher, releaseDate: f.date || (e.year ? String(e.year) : undefined), url: f.url, summary: f.pubTitle ? text : undefined };
-    case "certificates":
-      return { name: f.name || e.title, issuer: e.summary ? mdPlain(e.summary) : undefined, date: start };
-    case "awards":
-      return { title: f.name || e.title, date: start, summary: text };
-    case "skills":
-      return e.type === "oneline" ? { name: f.name || e.title, keywords: text.split(/,\s*/) } : { name: text };
-    case "interests":
-    case "languages":
-      return kind === "languages" ? { language: f.name || text, fluency: f.level || (f.name ? text : undefined) } : { name: text };
-    default:
-      return null;
-  }
-}
-
-function renderJsonResume(model) {
-  const { person } = model;
-  const out = {
-    $schema: "https://raw.githubusercontent.com/jsonresume/resume-schema/v1.0.0/schema.json",
-    basics: {
-      name: person.name,
-      label: person.headline,
-      email: person.email,
-      phone: person.phone,
-      url: person.links[0] ? person.links[0].url : undefined,
-      summary: person.summary.map(mdPlain).join("\n\n") || undefined,
-      location: person.location ? { city: person.location } : undefined,
-      image: person.photo ? person.photo.filename : undefined,
-      profiles: [
-        ...person.social.map((s) => ({ network: s.network, username: s.username, url: s.url })),
-        ...person.links.slice(1).map((l) => ({ network: l.text, url: l.url })),
-      ],
-    },
-  };
-  const skipped = [];
-  for (const sec of model.sections) {
-    if (sec.kind !== "entries") continue;
-    if (!sec.jsonResume) { skipped.push(sec.key); continue; }
-    const list = (out[sec.jsonResume] = out[sec.jsonResume] || []);
-    for (const e of sec.entries) {
-      const item = jrEntry(sec.jsonResume, e);
-      if (item) list.push(item);
-    }
-  }
-  out.meta = { generator: "cv-builder (Trilium)", lastModified: new Date().toISOString().slice(0, 19) };
-  return { json: JSON.stringify(out, (k, v) => (Array.isArray(v) && !v.length ? undefined : v), 2), skipped };
-}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Zotero CSL-JSON import
@@ -1282,11 +1093,8 @@ function buildVariant(tree, variantId) {
     css = FALLBACK_CSS;
   }
   const html = renderHtml(model, css);
-  const yaml = renderRenderCv(model);
-  const jr = renderJsonResume(model);
-  if (jr.skipped.length) model.warnings.push(`JSON Resume: no #jsonResume mapping for ${jr.skipped.join(", ")} (skipped).`);
   const base = (spec.filename || `${model.person.name}_CV_${rec.title}`).replace(/[^\w.-]+/g, "_");
-  return { model, html, yaml, json: jr.json, base, title: rec.title };
+  return { model, html, base, title: rec.title };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -1389,14 +1197,12 @@ async function openBuilder() {
   importBtn.title = "Import a Zotero CSL-JSON export into the publications section (replaces earlier imports)";
   const printBtn = mkButton("Print / PDF", true);
   const htmlBtn = mkButton("Save HTML", false);
-  const yamlBtn = mkButton("Save RenderCV YAML", false);
-  const jsonBtn = mkButton("Save JSON Resume", false);
   const storeBtn = mkButton("Store as notes", false);
   const closeBtn = mkButton("Close", false);
-  storeBtn.title = "Write the HTML / YAML / JSON as child notes of the variant";
+  storeBtn.title = "Write the HTML as a child note of the variant";
   const spacer = document.createElement("span");
   spacer.style.flex = "1";
-  bar.append(titleEl, select, reloadBtn, importBtn, templateBtn, spacer, printBtn, htmlBtn, yamlBtn, jsonBtn, storeBtn, closeBtn);
+  bar.append(titleEl, select, reloadBtn, importBtn, templateBtn, spacer, printBtn, htmlBtn, storeBtn, closeBtn);
 
   const warn = document.createElement("div");
   warn.style.cssText = "font-size:0.85em;color:var(--muted-text-color,#a60);white-space:pre-line;";
@@ -1458,17 +1264,13 @@ async function openBuilder() {
   printBtn.addEventListener("click", () => { if (current) frame.contentWindow.print(); });
   const outputDir = () => label(tree.notes[tree.rootId], "cvOutputDir") || null;
   htmlBtn.addEventListener("click", () => { if (current) saveFile(`${current.base}.html`, current.html, "text/html", outputDir()); });
-  yamlBtn.addEventListener("click", () => { if (current) saveFile(`${current.base}.yaml`, current.yaml, "text/yaml", outputDir()); });
-  jsonBtn.addEventListener("click", () => { if (current) saveFile(`${current.base}.json`, current.json, "application/json", outputDir()); });
   storeBtn.addEventListener("click", async () => {
     if (!current) return;
     try {
       await storeOutputs(select.value, [
         { kind: "html", title: `${current.title}.html`, mime: "text/html", content: current.html },
-        { kind: "yaml", title: `${current.title}.yaml`, mime: "text/x-yaml", content: current.yaml },
-        { kind: "jsonresume", title: `${current.title}.json`, mime: "application/json", content: current.json },
       ]);
-      api.showMessage(`Stored outputs under "${current.title}".`);
+      api.showMessage(`Stored the HTML under "${current.title}".`);
     } catch (error) {
       api.showError(`Storing outputs failed: ${error.message}`);
     }
@@ -1512,32 +1314,32 @@ const SETUP_TREE = {
     ],
   },
   sections: [
-    { key: "experience", title: "Experience", nl: "Werkervaring", entryType: "experience", jsonResume: "work", entries: [
+    { key: "experience", title: "Experience", nl: "Werkervaring", entryType: "experience", entries: [
       { title: "Current position — Organisation", position: "Current position", company: "Organisation", location: "City, Country", start: "2022-01", end: "present", tags: "example",
         items: ["Main responsibility or achievement", "Another responsibility or achievement"] },
       { title: "Previous position — Other organisation", position: "Previous position", company: "Other organisation", location: "City, Country", start: "2018", end: "2021",
         body: ["A one-line summary of the role."], items: ["Key result"] },
     ] },
-    { key: "education", title: "Education", nl: "Opleiding", entryType: "education", jsonResume: "education", entries: [
+    { key: "education", title: "Education", nl: "Opleiding", entryType: "education", entries: [
       { title: "MSc — University", degree: "MSc", area: "Field of study", title_long: "Master of Science in Field of study", institution: "University", start: "2014", end: "2016",
         body: ["Thesis or specialisation."] },
     ] },
-    { key: "publications", title: "Publications", nl: "Publicaties", entryType: "text", jsonResume: "publications", sort: "date",
+    { key: "publications", title: "Publications", nl: "Publicaties", entryType: "text", sort: "date",
       intro: ["Optional intro text, e.g. a link to your full publication list."], entries: [
       { title: "Example article (2024)", pubType: "journalArticle", year: "2024",
         body: ["Lastname, A., & Your Name (2024). Title of the article. *Journal Name*, *12*(3), 45-67. [https://doi.org/10.0000/example](https://doi.org/10.0000/example)"] },
     ] },
-    { key: "courses", title: "Courses", nl: "Cursussen", entryType: "normal", jsonResume: "certificates", entries: [
+    { key: "courses", title: "Courses", nl: "Cursussen", entryType: "normal", entries: [
       { title: "Course name", name: "Course name", date: "2020", body: ["Organiser"] },
     ] },
-    { key: "skills", title: "Skills", nl: "Vaardigheden", entryType: "text", jsonResume: "skills", entries: [
+    { key: "skills", title: "Skills", nl: "Vaardigheden", entryType: "text", entries: [
       { title: "Skill 1", body: ["A sentence describing a skill."] },
       { title: "Skill 2", body: ["Another skill."] },
     ] },
-    { key: "languages", title: "Languages", nl: "Talen", entryType: "oneline", jsonResume: "languages", entries: [
+    { key: "languages", title: "Languages", nl: "Talen", entryType: "oneline", entries: [
       { title: "English", name: "English", body: ["Fluent"] },
     ] },
-    { key: "interests", title: "Interests", nl: "Interesses", entryType: "bullet", jsonResume: "interests", entries: [
+    { key: "interests", title: "Interests", nl: "Interesses", entryType: "bullet", entries: [
       { title: "Interest 1", body: ["Interest 1"] },
       { title: "Interest 2", body: ["Interest 2"] },
     ] },
@@ -1547,12 +1349,12 @@ const SETUP_TREE = {
       lang: "en", template: "modern", highlight: ["Your Name"],
       main: ["profile", "experience", { section: "publications", groups: "by_type" }],
       sidebar: ["contact", "education", "courses", "skills", "languages", "interests"],
-      rendercv: { design: { theme: "classic" } } } },
+    } },
     { title: "Short CV (NL, business)", spec: {
       lang: "nl", template: "business", highlight: ["Your Name"],
       main: ["profile", { section: "experience", since: 2018 }, { section: "publications", max: 5, intro: false }],
       sidebar: ["contact", "education", "skills", "languages"],
-      rendercv: { design: { theme: "moderncv" } } } },
+    } },
     { title: "Research CV (EN, design)", spec: {
       lang: "en", template: "design", focus: ["research"], highlight: ["Your Name"],
       main: ["profile", "experience", { section: "publications", groups: [
@@ -1606,7 +1408,6 @@ async function ensureSetup(scriptNoteId) {
       sec.setLabel("cvSection");
       sec.setLabel("cvKey", s.key);
       sec.setLabel("entryType", s.entryType);
-      if (s.jsonResume) sec.setLabel("jsonResume", s.jsonResume);
       if (s.nl) sec.setLabel("cvTitle_nl", s.nl);
       if (s.sort) sec.setLabel("cvSort", s.sort);
       for (const e of s.entries) {
@@ -1675,7 +1476,7 @@ class CvBuilderWidget extends api.NoteContextAwareWidget {
 
   doRender() {
     this.$widget = $(`<div class="cv-builder-widget">
-      <button type="button" class="btn btn-sm btn-primary" title="Preview, print / PDF, RenderCV YAML, JSON Resume">
+      <button type="button" class="btn btn-sm btn-primary" title="Preview, print / PDF, save as HTML">
         <span class="bx bx-id-card"></span> Build CV…
       </button>
     </div>`);

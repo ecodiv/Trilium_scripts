@@ -6,16 +6,9 @@ degree, course and publication once, as notes with labels. *Variant* notes then
 choose which sections appear, in which order, in the main column or the sidebar,
 and which entries they include (by tag, year or maximum count).
 
-![](featured.png)
-
-
-For each variant you get:
-
-- an **HTML CV** with a live preview, **Print / PDF**, and **Save HTML**;
-- a **[RenderCV](https://github.com/rendercv/rendercv) YAML** file, for
-  typeset PDF output via Typst (`rendercv render file.yaml`);
-- a **[JSON Resume](https://jsonresume.org/)** file, for JSON Resume themes and
-  tools.
+For each variant you get an **HTML CV** with a live preview, **Print / PDF**
+and **Save HTML**. The look comes from CSS templates, and publications can be
+imported from Zotero.
 
 > Disclaimer: Created with help of Claude.ai
 
@@ -70,7 +63,7 @@ CV                         #cvRoot
 │                          ~photo   body = profile text
 ├── Sections
 │   ├── Experience         #cvSection #cvKey=experience #entryType=experience
-│   │   │                  #jsonResume=work #cvTitle_nl=Werkervaring
+│   │   │                  #cvTitle_nl=Werkervaring
 │   │   ├── <entry>        #position #company #location #start #end #tags #cvId
 │   │   │   └── nl         #cvTranslation=nl and/or #cvFocus=<name> (text variants)
 │   │   └── …
@@ -87,8 +80,7 @@ CV                         #cvRoot
 
 ### Entry types
 
-The section's `#entryType` sets the type for all of its entries. RenderCV
-requires every entry in a section to have the same type.
+The section's `#entryType` sets the type for all of its entries.
 
 | `#entryType` | Labels on entries | Body |
 | --- | --- | --- |
@@ -145,9 +137,6 @@ To combine types into your own subsections, list them:
   apply after the section-level ones.
 - `title` can be a plain string or one string per language. If a group has a
   single type and no title, the type's heading is used.
-- In RenderCV, group titles become bold lines within one section. Set
-  `"rendercv": { "groups": "sections" }` to get one RenderCV section per group
-  instead ("Publications – Peer-reviewed").
 
 ### Importing from Zotero
 
@@ -178,8 +167,7 @@ If you change an item's citation key in Zotero (for example in Better BibTeX),
 the next import treats it as a new item and removes the old note.
 
 To put your own name in bold in author lists, list the spellings that appear in
-your library under `"highlight"` in the variant. RenderCV gets the same list as
-`bold_keywords`.
+your library under `"highlight"` in the variant.
 
 ```json
 "highlight": ["de Vries, J.", "Vries, J. de", "De Vries, J."]
@@ -238,8 +226,8 @@ different emphasis, override `focus` there:
   research-oriented profile above teaching-oriented job descriptions.
 - `"focus"` on a single section in `main` or `sidebar`, such as
   `{ "section": "experience", "focus": ["research"] }`, applies to that
-  section's intro and entries only. Section titles can also use a `#cvTitle_nl` label. The `present` word,
-month names and the RenderCV locale come from `lang`; English and Dutch are
+  section's intro and entries only. Section titles can also use a `#cvTitle_nl` label. The `present` word
+and month names come from `lang`; English and Dutch are
 included, and other languages can be added in `LOCALES`.
 
 ## Variant spec
@@ -266,8 +254,7 @@ A variant is a JSON code note labelled `#cvVariant`:
   ],
   "sidebar": ["contact", "degrees", { "section": "short_courses", "max": 4 }, "skills"],
   "photo": true,
-  "filename": "CV_PvB_geo_nl",
-  "rendercv": { "design": { "theme": "moderncv" }, "locale": {}, "photo": "photo.png" }
+  "filename": "CV_PvB_geo_nl"
 }
 ```
 
@@ -281,9 +268,6 @@ A variant is a JSON code note labelled `#cvVariant`:
   (a string, or one string per language), `focus`, `groups` (see
   [Publications](#publications)), and `intro` (`false` hides the section note's
   intro text), plus tag filters.
-- RenderCV puts all sections in one column (main, then sidebar) and shows contact
-  details in its header. `rendercv.design` is passed to RenderCV unchanged; see
-  the [RenderCV docs](https://docs.rendercv.com/) for themes and options.
 
 ## Templates
 
@@ -333,17 +317,11 @@ The HTML uses stable classes for styling: `cv-sidebar`, `cv-main`,
 - **Print / PDF** opens the system print dialog for the preview. Choose *Save as
   PDF* or *Print to file*. If nothing happens, use **Save HTML** and print the
   file from a browser with background graphics enabled.
-- **Save HTML / YAML / JSON** opens a save dialog. To skip the dialog and always
-  write to the same folder, add `#cvOutputDir=~/Documents/CV` (or any path) to
-  the CV root note. **Store as notes** writes all three files as child notes of
-  the variant (`#cvOutputDir` is not needed for that), labelled
-  `#cvOutput=html|yaml|jsonresume`.
-- **RenderCV:** put the photo file (named after the image note, or as set in
-  `rendercv.photo`) next to the YAML file and run `rendercv render <file>.yaml`.
-  Typst downloads its packages (such as the icon font) the first time, so the
-  first render needs an internet connection; after that it works offline.
-- **JSON Resume** has fixed keys, so only sections with a `#jsonResume` label
-  are exported, and themes set their own section order.
+- **Save HTML** opens a save dialog. To skip the dialog and always write to the
+  same folder, add `#cvOutputDir=~/Documents/CV` (or any path) to the CV root
+  note. The HTML file is self-contained (CSS and photo included).
+- **Store as notes** writes the HTML as a child note of the variant, labelled
+  `#cvOutput=html`.
 
 ## License
 
