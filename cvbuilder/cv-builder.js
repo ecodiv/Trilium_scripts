@@ -1076,16 +1076,6 @@ async function syncPublications(payload) {
   }, [payload]);
 }
 
-function pickJsonFile() {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".json,application/json";
-    input.addEventListener("change", () => resolve((input.files || [])[0] || null));
-    input.click();
-  });
-}
-
 // Modal summary of a dry run; resolves to { removeManual } or null (cancel).
 function confirmImport(counts, fileName) {
   return new Promise((resolve) => {
@@ -1115,7 +1105,7 @@ function confirmImport(counts, fileName) {
 }
 
 async function importZotero() {
-  const file = await pickJsonFile();
+  const [file] = await pickFiles(".json,application/json", false);
   if (!file) return false;
   let items;
   try {
@@ -1133,6 +1123,108 @@ async function importZotero() {
   const result = await syncPublications({ items, dryRun: false, removeManual: choice.removeManual, importLabels: IMPORT_LABELS });
   if (result.error) { api.showError(result.error); return false; }
   api.showMessage(`Zotero import: ${result.added} new, ${result.updated} updated, ${result.removed + (result.manualRemoved || 0)} removed.`);
+  return true;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Template import
+ *
+ * Templates are plain .css files. Importing one creates (or, after
+ * confirmation, overwrites) a CSS code note in the CV tree's Templates folder
+ * (#cvTemplates), labelled #cvTemplate=<file name without .css>. Only the CV
+ * tree is searched, so template notes elsewhere in Trilium never block an
+ * import. Labels the user added to an existing template note (e.g.
+ * #cvExtends) are kept; only its content is replaced.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+const templateNameOf = (fileName) =>
+  fileName.replace(/\.css$/i, "").trim().replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "template";
+
+async function syncTemplates(payload) {
+  return api.runAsyncOnBackendWithManualTransactionHandling(async (p) => {
+    const root = api.searchForNotes("#cvRoot")[0];
+    if (!root) return { error: "No CV tree (#cvRoot) found." };
+    const inTree = [];
+    const walk = (n) => { for (const c of n.getChildNotes()) { inTree.push(c); walk(c); } };
+    walk(root);
+    const byName = new Map(inTree.filter((n) => n.hasLabel("cvTemplate")).map((n) => [n.getLabelValue("cvTemplate"), n]));
+    const existing = p.files.map((f) => f.name).filter((n) => byName.has(n));
+    if (p.dryRun) return { existing };
+
+    let folder = inTree.find((n) => n.hasLabel("cvTemplates")) || root.getChildNotes().find((n) => n.title === "Templates");
+    if (!folder) {
+      folder = (await api.createNewNote({ parentNoteId: root.noteId, title: "Templates", type: "text", content: "" })).note;
+      folder.setLabel("iconClass", "bx bx-palette");
+    }
+    folder.setLabel("cvTemplates");
+    const added = [];
+    const replaced = [];
+    for (const f of p.files) {
+      const note = byName.get(f.name);
+      if (note) {
+        note.setContent(f.css);
+        replaced.push(f.name);
+      } else {
+        const { note: created } = await api.createNewNote({ parentNoteId: folder.noteId, title: `${f.name}.css`, type: "code", mime: "text/css", content: f.css });
+        created.setLabel("cvTemplate", f.name);
+        added.push(f.name);
+      }
+    }
+    return { added, replaced };
+  }, [payload]);
+}
+
+// Generic yes/no modal; resolves true on OK.
+function confirmDialog(title, html, okLabel) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;z-index:100001;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);";
+    const box = document.createElement("div");
+    box.style.cssText = "background:var(--main-background-color,#fff);color:var(--main-text-color,#000);border:1px solid var(--main-border-color,#ccc);" +
+      "border-radius:6px;padding:16px;width:min(460px,92vw);box-shadow:0 8px 30px rgba(0,0,0,0.35);";
+    box.innerHTML = `<div style="font-weight:600;margin-bottom:8px;">${escapeHtml(title)}</div><div>${html}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button type="button" class="btn btn-sm btn-secondary" data-act="cancel">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" data-act="ok">${escapeHtml(okLabel)}</button></div>`;
+    overlay.append(box);
+    document.body.append(overlay);
+    const done = (v) => { overlay.remove(); resolve(v); };
+    box.querySelector('[data-act="cancel"]').addEventListener("click", () => done(false));
+    box.querySelector('[data-act="ok"]').addEventListener("click", () => done(true));
+  });
+}
+
+function pickFiles(accept, multiple) {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = !!multiple;
+    input.addEventListener("change", () => resolve(Array.from(input.files || [])));
+    input.click();
+  });
+}
+
+async function importTemplates() {
+  const picked = await pickFiles(".css,text/css", true);
+  if (!picked.length) return false;
+  const files = [];
+  for (const f of picked) files.push({ name: templateNameOf(f.name), css: await f.text() });
+  const check = await syncTemplates({ files, dryRun: true });
+  if (check.error) { api.showError(check.error); return false; }
+  if (check.existing.length) {
+    const ok = await confirmDialog("Replace templates?",
+      `This CV tree already has ${check.existing.map((n) => `<code>${escapeHtml(n)}</code>`).join(", ")}. ` +
+      "Their CSS will be replaced by the imported file; changes you made to it in Trilium are lost. Labels on the notes are kept.",
+      "Replace");
+    if (!ok) return false;
+  }
+  const result = await syncTemplates({ files, dryRun: false });
+  if (result.error) { api.showError(result.error); return false; }
+  const parts = [];
+  if (result.added.length) parts.push(`added ${result.added.join(", ")}`);
+  if (result.replaced.length) parts.push(`replaced ${result.replaced.join(", ")}`);
+  api.showMessage(`Templates: ${parts.join("; ")}.`);
   return true;
 }
 
@@ -1156,9 +1248,23 @@ function templateCss(tree, name, seen = new Set()) {
   return base + "\n" + (rec.content || "");
 }
 
-// Used only when no template note is found, so the preview stays readable.
-const FALLBACK_CSS = "body{font-family:sans-serif;max-width:210mm;margin:8mm auto;padding:0 10mm}" +
-  ".cv-bg{display:none}.cv{display:grid;grid-template-columns:1fr 2fr;gap:8mm}.when{font-weight:bold}";
+// Used only when the variant's template note is missing: a plain but readable
+// two-column layout (icons must be sized, unsized SVGs fill the page).
+const FALLBACK_CSS = `
+body{font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.4;color:#222;background:#fff;max-width:210mm;margin:8mm auto;padding:0 12mm}
+.cv-bg,.page-gap{display:none}.cv-page{border-collapse:collapse;width:100%}.cv-page td{padding:0;vertical-align:top}
+.cv{display:grid;grid-template-columns:30% 1fr;gap:8mm}.no-sidebar .cv{grid-template-columns:1fr}
+h1{margin:0;font-size:20pt}.headline{color:#555;margin-bottom:4mm}
+h2{font-size:12pt;border-bottom:1px solid #ccc;margin:5mm 0 2mm;padding-bottom:1mm}h3{font-size:10.5pt;margin:3mm 0 1mm}
+p{margin:0 0 1.5mm}ul{margin:1mm 0 0;padding-left:5mm}a{color:#235}
+.photo{display:block;width:35mm;height:35mm;object-fit:cover;margin-bottom:4mm}
+.ic{width:1em;height:1em;flex:none;fill:none;stroke:currentColor;stroke-width:1.8}.ic.brand{fill:currentColor;stroke:none}
+.contact{list-style:none;padding:0;margin:0}.contact li{display:flex;gap:2mm;align-items:center;margin-bottom:1mm;word-break:break-word}
+.entry{margin-bottom:3mm;break-inside:avoid}.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:24mm 1fr;gap:4mm}
+.no-dates .entry{display:block!important}.no-dates .when{display:none}.when{font-weight:bold;font-size:9pt}.head{font-weight:bold}.sub{color:#555;font-style:italic}
+.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}.s-profile .entry.text p{padding-left:0;text-indent:0}
+@page{size:A4;margin:12mm}@media print{body{margin:0}}
+`;
 
 function buildVariant(tree, variantId) {
   const rec = tree.notes[variantId];
@@ -1172,7 +1278,7 @@ function buildVariant(tree, variantId) {
   const templateName = spec.template || "modern";
   let css = templateCss(tree, templateName);
   if (css == null) {
-    model.warnings.push(`No template note with #cvTemplate=${templateName}; using a plain fallback style. Run cv-seed.js again to add the "modern" template.`);
+    model.warnings.push(`No template "${templateName}" in this CV tree; using a plain fallback style. Add it with "Import template…" (${templateName}.css from the templates folder of the cv-builder repository).`);
     css = FALLBACK_CSS;
   }
   const html = renderHtml(model, css);
@@ -1278,6 +1384,8 @@ async function openBuilder() {
   };
   const reloadBtn = mkButton("Reload notes", false);
   const importBtn = mkButton("Import Zotero…", false);
+  const templateBtn = mkButton("Import template…", false);
+  templateBtn.title = "Add or update template .css files in this CV tree";
   importBtn.title = "Import a Zotero CSL-JSON export into the publications section (replaces earlier imports)";
   const printBtn = mkButton("Print / PDF", true);
   const htmlBtn = mkButton("Save HTML", false);
@@ -1288,7 +1396,7 @@ async function openBuilder() {
   storeBtn.title = "Write the HTML / YAML / JSON as child notes of the variant";
   const spacer = document.createElement("span");
   spacer.style.flex = "1";
-  bar.append(titleEl, select, reloadBtn, importBtn, spacer, printBtn, htmlBtn, yamlBtn, jsonBtn, storeBtn, closeBtn);
+  bar.append(titleEl, select, reloadBtn, importBtn, templateBtn, spacer, printBtn, htmlBtn, yamlBtn, jsonBtn, storeBtn, closeBtn);
 
   const warn = document.createElement("div");
   warn.style.cssText = "font-size:0.85em;color:var(--muted-text-color,#a60);white-space:pre-line;";
@@ -1333,6 +1441,13 @@ async function openBuilder() {
     }
   };
   reloadBtn.addEventListener("click", reload);
+  templateBtn.addEventListener("click", async () => {
+    try {
+      if (await importTemplates()) await reload();
+    } catch (error) {
+      api.showError(`Template import failed: ${error.message}`);
+    }
+  });
   importBtn.addEventListener("click", async () => {
     try {
       if (await importZotero()) await reload();
@@ -1373,229 +1488,10 @@ async function openBuilder() {
  * placeholder content is created as a child of this script note (move it
  * anywhere; everything is found by label). The script note then gets
  * #cvSetupDone so a deleted tree is not recreated; remove that label to get a
- * fresh tree. When a #cvRoot exists, only missing template notes are added;
- * existing notes are never changed.
+ * fresh tree. Templates are not created here: they are separate .css files
+ * (templates/ folder of the repository) added with "Import template…".
  * ────────────────────────────────────────────────────────────────────────── */
 
-const SETUP_TEMPLATES = {
-  modern: `/* "modern" CV template for cv-builder.
-   Layout: coloured sidebar (--main), accent headings (--accent), A4 print.
-   Variables can be overridden per variant via "style" (main, accent, font,
-   sidebar_width).
-   Print: cv-builder wraps the page in a table whose repeated <thead>/<tfoot>
-   spacers (.page-gap) give each printed page a top/bottom margin while
-   @page margin stays 0, so the fixed sidebar band (.cv-bg) runs edge to edge.
-   Don't switch to @page margins: that leaves white gaps in the band. */
-:root{--main:#274232;--accent:#157F3F;--font:'Lato';--sidebar-width:34%;--text:#222;--muted:#666;--gap:12mm}
-*{box-sizing:border-box}
-html{background:#e9ecef}
-body{margin:0 auto;width:210mm;min-height:297mm;background:#fff;color:var(--text);
-  font-family:var(--font),'Helvetica Neue',Arial,sans-serif;font-size:9.5pt;line-height:1.4;position:relative;
-  -webkit-print-color-adjust:exact;print-color-adjust:exact}
-.cv-bg{position:absolute;top:0;bottom:0;left:0;width:var(--sidebar-width);background:var(--main)}
-.no-sidebar .cv-bg{display:none}
-.cv-page{border-collapse:collapse;width:100%;position:relative}
-.cv-page td{padding:0;vertical-align:top}
-.page-gap{height:var(--gap)}
-.cv{display:grid;grid-template-columns:var(--sidebar-width) 1fr}
-.no-sidebar .cv{grid-template-columns:1fr}
-.cv-sidebar{color:#f2f5f3;padding:0 7mm}
-.cv-main{padding:0 10mm 0 8mm}
-.no-sidebar .cv-main{padding:0 16mm}
-.photo{display:block;width:38mm;height:38mm;object-fit:cover;border-radius:50%;margin:0 auto 6mm;border:3px solid rgba(255,255,255,.6)}
-.cv-header h1{margin:0;font-size:24pt;font-weight:300;color:var(--main);letter-spacing:.5px}
-.cv-header .headline{font-size:11pt;color:var(--accent);margin:1mm 0 4mm;text-transform:uppercase;letter-spacing:1.5px}
-h2{font-size:12pt;font-weight:700;color:var(--accent);margin:5mm 0 2.5mm;padding-bottom:1mm;
-  border-bottom:1px solid #ccd5cf;break-after:avoid;page-break-after:avoid}
-.cv-sidebar h2{color:#fff;border-bottom-color:rgba(255,255,255,.35);font-size:11pt}
-a{color:inherit;text-decoration:none}
-.cv-main a{color:var(--accent)}
-p{margin:0 0 1.5mm}
-ul{margin:1mm 0 0;padding-left:4.5mm}
-li{margin-bottom:.8mm}
-.entry{break-inside:avoid;page-break-inside:avoid;margin-bottom:3mm}
-.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:24mm 1fr;column-gap:4mm}
-.cv-main .no-dates .entry{display:block}
-.no-dates .when{display:none}
-.when{color:var(--accent);font-size:8.5pt;font-weight:700;padding-top:.5mm}
-.head{font-weight:700}
-.sub{color:var(--muted);font-style:italic;font-size:8.8pt;margin-bottom:1mm}
-.cv-sidebar .sub{color:rgba(255,255,255,.75)}
-.cv-sidebar .entry{margin-bottom:2.5mm;font-size:8.8pt}
-.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}
-.cv-main .s-profile .entry.text p{padding-left:0;text-indent:0}
-.cv-main .intro,.cv-main .s-profile p{font-style:normal}
-.intro{color:var(--muted);font-style:italic}
-.cv-sidebar .intro{color:rgba(255,255,255,.8)}
-.contact{list-style:none;padding:0;margin:0}
-.contact li{display:flex;align-items:center;gap:2.5mm;margin-bottom:1.6mm;word-break:break-word}
-.ic{width:4mm;height:4mm;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.cv-sidebar .ic{stroke:#a9d8bb}
-.ic.brand{fill:currentColor;stroke:none;width:3.6mm;height:3.6mm}
-.cv-sidebar .ic.brand{fill:#a9d8bb}
-.bullets{padding-left:4mm}
-h3{font-size:10pt;font-weight:700;color:var(--main);margin:3.5mm 0 2mm;break-after:avoid;page-break-after:avoid}
-.cv-sidebar h3{color:#fff}
-@page{size:A4;margin:0}
-@media print{html{background:none}body{margin:0;min-height:0}.cv-bg{position:fixed}}
-@media screen{body{box-shadow:0 2px 12px rgba(0,0,0,.25);margin:8mm auto}}
-`,
-  design: `/* "design" CV template for cv-builder.
-   Light, editorial layout: sidebar on the right on a warm tint, a large serif
-   name with an accent block bleeding off the left edge, a vertical timeline for
-   dated entries, and bullet sections (e.g. soft skills) shown as chips.
-   Variables (overridable per variant via "style"): --main (text/headings),
-   --accent, --font (body), --sidebar-width.
-   Print: same table spacer technique as "modern" (@page margin 0, the
-   .page-gap rows give each page its top/bottom margin, .cv-bg is fixed so the
-   tint runs edge to edge); don't switch to @page margins. */
-:root{--main:#1d1d1f;--accent:#e4572e;--font:'Inter';--sidebar-width:31%;--text:#1d1d1f;--muted:#6b6b70;
-  --tint:#f5f0ea;--line:#ddd5cc;--display:'Playfair Display','DM Serif Display','Libre Baskerville',Georgia,serif;--gap:14mm}
-*{box-sizing:border-box}
-html{background:#d9d6d2}
-body{margin:0 auto;width:210mm;min-height:297mm;background:#fff;color:var(--text);
-  font-family:var(--font),'Helvetica Neue',Arial,sans-serif;font-size:9.3pt;line-height:1.45;position:relative;
-  -webkit-print-color-adjust:exact;print-color-adjust:exact}
-.cv-bg{position:absolute;top:0;bottom:0;right:0;width:var(--sidebar-width);background:var(--tint)}
-.no-sidebar .cv-bg{display:none}
-.cv-page{border-collapse:collapse;width:100%;position:relative}
-.cv-page td{padding:0;vertical-align:top}
-.page-gap{height:var(--gap)}
-.cv{display:grid;grid-template-columns:1fr var(--sidebar-width)}
-.no-sidebar .cv{grid-template-columns:1fr}
-.cv-sidebar{order:2;padding:0 8mm 0 7mm}
-.cv-main{order:1;padding:0 9mm 0 14mm}
-.no-sidebar .cv-main{padding:0 18mm}
-
-/* Header */
-.cv-header{position:relative;margin-bottom:7mm;padding-top:1mm}
-.cv-header::before{content:"";position:absolute;left:-14mm;top:1mm;width:8mm;height:21mm;background:var(--accent)}
-.cv-header h1{margin:0;font-family:var(--display);font-size:34pt;font-weight:700;line-height:1.02;letter-spacing:-.5px;color:var(--main)}
-.cv-header .headline{margin-top:3mm;font-size:8.5pt;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:var(--accent)}
-/* Greyscale first, then the accent offset shadow, so the shadow keeps its colour
-   (a box-shadow would be greyed out by the filter too). */
-.photo{display:block;width:calc(100% - 3mm);aspect-ratio:1/1;object-fit:cover;margin:0 0 9mm;filter:grayscale(100%) drop-shadow(3mm 3mm 0 var(--accent))}
-
-/* Headings */
-h2{display:flex;align-items:center;gap:3mm;margin:7mm 0 3.5mm;font-size:8.5pt;font-weight:700;letter-spacing:2.5px;
-  text-transform:uppercase;color:var(--main);break-after:avoid;page-break-after:avoid}
-h2::before{content:"";flex:none;width:6mm;height:2px;background:var(--accent)}
-.cv-main section:first-of-type h2{margin-top:2mm}
-h3{margin:4.5mm 0 2mm;font-size:9pt;font-weight:700;color:var(--accent);break-after:avoid;page-break-after:avoid}
-
-a{color:inherit;text-decoration:none}
-.cv-main a{color:var(--accent)}
-p{margin:0 0 1.5mm}
-ul{margin:1mm 0 0;padding-left:4mm}
-li{margin-bottom:.8mm}
-li::marker{color:var(--accent)}
-
-/* Entries: timeline for dated entries in the main column */
-.entry{break-inside:avoid;page-break-inside:avoid;margin-bottom:4mm}
-.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:23mm 1fr;column-gap:5mm;margin-bottom:0}
-.cv-main .entry .what{position:relative;border-left:1px solid var(--line);padding:0 0 4.5mm 5mm}
-.cv-main .entry .what::before{content:"";position:absolute;left:-1.35mm;top:1.1mm;width:2.2mm;height:2.2mm;border-radius:50%;background:#fff;border:1.5px solid var(--accent)}
-.cv-main .no-dates .entry{display:block;margin-bottom:3.5mm}
-.cv-main .no-dates .what{border-left:0;padding:0}
-.cv-main .no-dates .what::before,.no-dates .when{display:none}
-.when{padding-top:.2mm;font-size:8pt;font-weight:600;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
-.head{font-size:10pt;font-weight:700}
-.sub{margin-bottom:1.2mm;font-size:8.5pt;font-weight:500;color:var(--accent)}
-.cv-sidebar .entry{margin-bottom:3.2mm;font-size:8.6pt}
-.cv-sidebar .head{font-size:8.8pt}
-.cv-sidebar .sub{color:var(--muted);font-weight:400}
-.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}
-.cv-main .s-profile .entry.text p{padding-left:0;text-indent:0;font-size:10.5pt;line-height:1.55;color:#3a3a3e}
-.intro{color:var(--muted);font-style:italic}
-
-/* Contact */
-.contact{list-style:none;padding:0;margin:0}
-.contact li{display:flex;align-items:center;gap:2.5mm;margin-bottom:1.8mm;font-size:8.6pt;word-break:break-word}
-.ic{width:3.8mm;height:3.8mm;flex:none;fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.ic.brand{fill:var(--accent);stroke:none;width:3.4mm;height:3.4mm}
-
-/* Bullet sections as chips */
-.bullets{display:flex;flex-wrap:wrap;gap:1.5mm;list-style:none;padding:0;margin:0}
-.bullets li{margin:0;padding:.5mm 2.6mm;border:1px solid var(--accent);border-radius:999px;font-size:8pt;line-height:1.4}
-
-@page{size:A4;margin:0}
-@media print{html{background:none}body{margin:0;min-height:0}.cv-bg{position:fixed}}
-@media screen{body{box-shadow:0 2px 16px rgba(0,0,0,.2);margin:8mm auto}}
-`,
-  business: `/* "business" CV template for cv-builder.
-   Conservative corporate layout: navy accent, pale grey sidebar on the left
-   with a thin rule, name above a full-width rule, dates right-aligned next to
-   each position, upright (non-italic) company names, passport-style photo.
-   Variables (overridable per variant via "style"): --main (navy), --accent,
-   --font, --sidebar-width.
-   Print: same table spacer technique as "modern" (@page margin 0, .page-gap
-   rows give each page its margins, .cv-bg is fixed); don't switch to @page
-   margins. */
-:root{--main:#1f3a5f;--accent:#1f3a5f;--font:'Source Sans 3';--sidebar-width:30%;--text:#222;--muted:#5f6b7a;
-  --rule:#c9d1db;--tint:#f2f4f7;--gap:13mm}
-*{box-sizing:border-box}
-html{background:#e6e9ee}
-body{margin:0 auto;width:210mm;min-height:297mm;background:#fff;color:var(--text);
-  font-family:var(--font),'Calibri','Carlito','Segoe UI',Arial,sans-serif;font-size:9.6pt;line-height:1.4;position:relative;
-  -webkit-print-color-adjust:exact;print-color-adjust:exact}
-.cv-bg{position:absolute;top:0;bottom:0;left:0;width:var(--sidebar-width);background:var(--tint);border-right:1px solid var(--rule)}
-.no-sidebar .cv-bg{display:none}
-.cv-page{border-collapse:collapse;width:100%;position:relative}
-.cv-page td{padding:0;vertical-align:top}
-.page-gap{height:var(--gap)}
-.cv{display:grid;grid-template-columns:var(--sidebar-width) 1fr}
-.no-sidebar .cv{grid-template-columns:1fr}
-.cv-sidebar{padding:0 6mm 0 9mm}
-.cv-main{padding:0 12mm 0 8mm}
-.no-sidebar .cv-main{padding:0 16mm}
-
-/* Header */
-.cv-header{border-bottom:2px solid var(--main);padding-bottom:3mm;margin-bottom:1mm}
-.cv-header h1{margin:0;font-size:23pt;font-weight:700;letter-spacing:.2px;color:var(--main)}
-.cv-header .headline{margin-top:.8mm;font-size:11pt;color:var(--muted)}
-.photo{display:block;width:30mm;height:37mm;object-fit:cover;margin:0 0 5mm;border:1px solid var(--rule)}
-
-/* Headings */
-h2{margin:5.5mm 0 2.5mm;padding-bottom:.8mm;border-bottom:1px solid var(--rule);font-size:10pt;font-weight:700;
-  letter-spacing:1px;text-transform:uppercase;color:var(--main);break-after:avoid;page-break-after:avoid}
-.cv-sidebar h2{font-size:9pt}
-h3{margin:3mm 0 1.5mm;font-size:9.6pt;font-weight:700;color:var(--text);break-after:avoid;page-break-after:avoid}
-
-a{color:inherit;text-decoration:none}
-.cv-main a{color:var(--main)}
-p{margin:0 0 1.4mm}
-ul{margin:.8mm 0 0;padding-left:4.5mm}
-li{margin-bottom:.6mm}
-li::marker{color:var(--main)}
-
-/* Entries: position left, dates right */
-.entry{break-inside:avoid;page-break-inside:avoid;margin-bottom:3.2mm}
-.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:1fr 24mm;column-gap:4mm}
-.cv-main .entry .what{grid-column:1;grid-row:1}
-.cv-main .entry .when{grid-column:2;grid-row:1;text-align:right;white-space:nowrap}
-.cv-main .no-dates .entry{display:block}
-.no-dates .when{display:none}
-.when{font-size:9pt;color:var(--muted)}
-.head{font-weight:700}
-.sub{margin-bottom:1mm;font-size:9.2pt;color:var(--main)}
-.cv-sidebar .entry{margin-bottom:2.6mm;font-size:8.9pt}
-.cv-sidebar .sub{color:var(--muted)}
-.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}
-.cv-main .s-profile .entry.text p{padding-left:0;text-indent:0}
-.intro{color:var(--muted)}
-
-/* Contact */
-.contact{list-style:none;padding:0;margin:0}
-.contact li{display:flex;align-items:center;gap:2.4mm;margin-bottom:1.5mm;font-size:8.9pt;word-break:break-word}
-.ic{width:3.8mm;height:3.8mm;flex:none;fill:none;stroke:var(--main);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.ic.brand{fill:var(--main);stroke:none;width:3.4mm;height:3.4mm}
-.bullets{padding-left:4mm}
-
-@page{size:A4;margin:0}
-@media print{html{background:none}body{margin:0;min-height:0}.cv-bg{position:fixed}}
-@media screen{body{box-shadow:0 2px 12px rgba(0,0,0,.2);margin:8mm auto}}
-`,
-};
 
 // Placeholder content. Each section shows the labels its entry type uses.
 const SETUP_TREE = {
@@ -1604,7 +1500,7 @@ const SETUP_TREE = {
     "<ul><li><strong>Profile</strong>: name, contact labels and your profile text. Child notes with <code>#cvTranslation</code> or <code>#cvFocus</code> hold alternative texts.</li>" +
     "<li><strong>Sections</strong>: one note per section, one child note per entry. The labels on the example entries show which fields each type uses.</li>" +
     "<li><strong>Variants</strong>: JSON notes choosing sections, order, filters, language and template.</li>" +
-    "<li><strong>Templates</strong>: CSS notes for the HTML look.</li></ul>" +
+    "<li><strong>Templates</strong>: CSS notes for the HTML look. Add them with <strong>Import template…</strong> in the builder (the .css files in the templates folder of the cv-builder repository).</li></ul>" +
     "<p>Replace the example content with your own. Publications can be imported from Zotero (CSL JSON) with <strong>Import Zotero…</strong> in the builder.</p>",
   profile: {
     labels: { name: "Your Name", headline: "Your job title", location: "City, Country", email: "you@example.com", github: "your-github-name", linkedin: "your-linkedin-name" },
@@ -1682,29 +1578,7 @@ async function ensureSetup(scriptNoteId) {
       if (icon) note.setLabel("iconClass", icon);
       return note;
     };
-    const ensureTemplates = async (root) => {
-      let folder = root.getChildNotes().find((c) => c.hasLabel("cvTemplates") || c.title === "Templates");
-      if (!folder) {
-        folder = await textNote(root.noteId, "Templates",
-          "<p>CSS code notes labelled <code>#cvTemplate=&lt;name&gt;</code>, chosen by a variant with <code>\"template\": \"&lt;name&gt;\"</code>. Add <code>#cvExtends=&lt;other&gt;</code> to build on another template.</p>",
-          "bx bx-palette");
-      }
-      folder.setLabel("cvTemplates");
-      const added = [];
-      for (const [name, css] of Object.entries(p.templates)) {
-        if (api.searchForNotes(`#cvTemplate=${name}`).length) continue;
-        const { note } = await api.createNewNote({ parentNoteId: folder.noteId, title: `${name}.css`, type: "code", mime: "text/css", content: css });
-        note.setLabel("cvTemplate", name);
-        added.push(name);
-      }
-      return added;
-    };
-
-    const existing = api.searchForNotes("#cvRoot");
-    if (existing.length) {
-      const added = await ensureTemplates(existing[0]);
-      return { status: added.length ? "templates" : "ok", added };
-    }
+    if (api.searchForNotes("#cvRoot").length) return { status: "ok" };
     const script = api.getNote(p.scriptNoteId);
     if (!script || script.hasLabel("cvSetupDone")) return { status: "skipped" };
 
@@ -1747,10 +1621,14 @@ async function ensureSetup(scriptNoteId) {
       const { note } = await api.createNewNote({ parentNoteId: variants.noteId, title: v.title, type: "code", mime: "application/json", content: JSON.stringify(v.spec, null, 2) });
       note.setLabel("cvVariant");
     }
-    await ensureTemplates(root);
+    const templates = await textNote(root.noteId, "Templates",
+      "<p>CSS code notes labelled <code>#cvTemplate=&lt;name&gt;</code>, chosen by a variant with <code>\"template\": \"&lt;name&gt;\"</code>. " +
+      "Add or update them with <strong>Import template…</strong> in the builder. Add <code>#cvExtends=&lt;other&gt;</code> to build on another template.</p>",
+      "bx bx-palette");
+    templates.setLabel("cvTemplates");
     script.setLabel("cvSetupDone");
     return { status: "created", rootId: root.noteId };
-  }, [{ scriptNoteId, tree: SETUP_TREE, templates: SETUP_TEMPLATES }]);
+  }, [{ scriptNoteId, tree: SETUP_TREE }]);
 }
 
 // Runs once per frontend load (module scope of the #widget note).
@@ -1760,9 +1638,7 @@ async function autoSetup() {
   try {
     const result = await ensureSetup(script.noteId);
     if (result.status === "created") {
-      api.showMessage("CV builder: created a CV tree with example content under this script note. Open the note \"CV\" to start; you can move it anywhere.");
-    } else if (result.status === "templates") {
-      api.showMessage(`CV builder: added template note(s): ${result.added.join(", ")}.`);
+      api.showMessage("CV builder: created a CV tree with example content under this script note. Open the note \"CV\", click Build CV… and use Import template… to add the template .css files.");
     }
   } catch (error) {
     console.error("cv-builder setup:", error);

@@ -1,0 +1,81 @@
+/* "design" CV template for cv-builder.
+   Light, editorial layout: sidebar on the right on a warm tint, a large serif
+   name with an accent block bleeding off the left edge, a vertical timeline for
+   dated entries, and bullet sections (e.g. soft skills) shown as chips.
+   Variables (overridable per variant via "style"): --main (text/headings),
+   --accent, --font (body), --sidebar-width.
+   Print: same table spacer technique as "modern" (@page margin 0, the
+   .page-gap rows give each page its top/bottom margin, .cv-bg is fixed so the
+   tint runs edge to edge); don't switch to @page margins. */
+:root{--main:#1d1d1f;--accent:#e4572e;--font:'Inter';--sidebar-width:31%;--text:#1d1d1f;--muted:#6b6b70;
+  --tint:#f5f0ea;--line:#ddd5cc;--display:'Playfair Display','DM Serif Display','Libre Baskerville',Georgia,serif;--gap:14mm}
+*{box-sizing:border-box}
+html{background:#d9d6d2}
+body{margin:0 auto;width:210mm;min-height:297mm;background:#fff;color:var(--text);
+  font-family:var(--font),'Helvetica Neue',Arial,sans-serif;font-size:9.3pt;line-height:1.45;position:relative;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cv-bg{position:absolute;top:0;bottom:0;right:0;width:var(--sidebar-width);background:var(--tint)}
+.no-sidebar .cv-bg{display:none}
+.cv-page{border-collapse:collapse;width:100%;position:relative}
+.cv-page td{padding:0;vertical-align:top}
+.page-gap{height:var(--gap)}
+.cv{display:grid;grid-template-columns:1fr var(--sidebar-width)}
+.no-sidebar .cv{grid-template-columns:1fr}
+.cv-sidebar{order:2;padding:0 8mm 0 7mm}
+.cv-main{order:1;padding:0 9mm 0 14mm}
+.no-sidebar .cv-main{padding:0 18mm}
+
+/* Header */
+.cv-header{position:relative;margin-bottom:7mm;padding-top:1mm}
+.cv-header::before{content:"";position:absolute;left:-14mm;top:1mm;width:8mm;height:21mm;background:var(--accent)}
+.cv-header h1{margin:0;font-family:var(--display);font-size:34pt;font-weight:700;line-height:1.02;letter-spacing:-.5px;color:var(--main)}
+.cv-header .headline{margin-top:3mm;font-size:8.5pt;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:var(--accent)}
+/* Greyscale first, then the accent offset shadow, so the shadow keeps its colour
+   (a box-shadow would be greyed out by the filter too). */
+.photo{display:block;width:calc(100% - 3mm);aspect-ratio:1/1;object-fit:cover;margin:0 0 9mm;filter:grayscale(100%) drop-shadow(3mm 3mm 0 var(--accent))}
+
+/* Headings */
+h2{display:flex;align-items:center;gap:3mm;margin:7mm 0 3.5mm;font-size:8.5pt;font-weight:700;letter-spacing:2.5px;
+  text-transform:uppercase;color:var(--main);break-after:avoid;page-break-after:avoid}
+h2::before{content:"";flex:none;width:6mm;height:2px;background:var(--accent)}
+.cv-main section:first-of-type h2{margin-top:2mm}
+h3{margin:4.5mm 0 2mm;font-size:9pt;font-weight:700;color:var(--accent);break-after:avoid;page-break-after:avoid}
+
+a{color:inherit;text-decoration:none}
+.cv-main a{color:var(--accent)}
+p{margin:0 0 1.5mm}
+ul{margin:1mm 0 0;padding-left:4mm}
+li{margin-bottom:.8mm}
+li::marker{color:var(--accent)}
+
+/* Entries: timeline for dated entries in the main column */
+.entry{break-inside:avoid;page-break-inside:avoid;margin-bottom:4mm}
+.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:23mm 1fr;column-gap:5mm;margin-bottom:0}
+.cv-main .entry .what{position:relative;border-left:1px solid var(--line);padding:0 0 4.5mm 5mm}
+.cv-main .entry .what::before{content:"";position:absolute;left:-1.35mm;top:1.1mm;width:2.2mm;height:2.2mm;border-radius:50%;background:#fff;border:1.5px solid var(--accent)}
+.cv-main .no-dates .entry{display:block;margin-bottom:3.5mm}
+.cv-main .no-dates .what{border-left:0;padding:0}
+.cv-main .no-dates .what::before,.no-dates .when{display:none}
+.when{padding-top:.2mm;font-size:8pt;font-weight:600;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.head{font-size:10pt;font-weight:700}
+.sub{margin-bottom:1.2mm;font-size:8.5pt;font-weight:500;color:var(--accent)}
+.cv-sidebar .entry{margin-bottom:3.2mm;font-size:8.6pt}
+.cv-sidebar .head{font-size:8.8pt}
+.cv-sidebar .sub{color:var(--muted);font-weight:400}
+.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}
+.cv-main .s-profile .entry.text p{padding-left:0;text-indent:0;font-size:10.5pt;line-height:1.55;color:#3a3a3e}
+.intro{color:var(--muted);font-style:italic}
+
+/* Contact */
+.contact{list-style:none;padding:0;margin:0}
+.contact li{display:flex;align-items:center;gap:2.5mm;margin-bottom:1.8mm;font-size:8.6pt;word-break:break-word}
+.ic{width:3.8mm;height:3.8mm;flex:none;fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ic.brand{fill:var(--accent);stroke:none;width:3.4mm;height:3.4mm}
+
+/* Bullet sections as chips */
+.bullets{display:flex;flex-wrap:wrap;gap:1.5mm;list-style:none;padding:0;margin:0}
+.bullets li{margin:0;padding:.5mm 2.6mm;border:1px solid var(--accent);border-radius:999px;font-size:8pt;line-height:1.4}
+
+@page{size:A4;margin:0}
+@media print{html{background:none}body{margin:0;min-height:0}.cv-bg{position:fixed}}
+@media screen{body{box-shadow:0 2px 16px rgba(0,0,0,.2);margin:8mm auto}}

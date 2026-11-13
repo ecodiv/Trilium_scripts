@@ -1,0 +1,61 @@
+/* "modern" CV template for cv-builder.
+   Layout: coloured sidebar (--main), accent headings (--accent), A4 print.
+   Variables can be overridden per variant via "style" (main, accent, font,
+   sidebar_width).
+   Print: cv-builder wraps the page in a table whose repeated <thead>/<tfoot>
+   spacers (.page-gap) give each printed page a top/bottom margin while
+   @page margin stays 0, so the fixed sidebar band (.cv-bg) runs edge to edge.
+   Don't switch to @page margins: that leaves white gaps in the band. */
+:root{--main:#274232;--accent:#157F3F;--font:'Lato';--sidebar-width:34%;--text:#222;--muted:#666;--gap:12mm}
+*{box-sizing:border-box}
+html{background:#e9ecef}
+body{margin:0 auto;width:210mm;min-height:297mm;background:#fff;color:var(--text);
+  font-family:var(--font),'Helvetica Neue',Arial,sans-serif;font-size:9.5pt;line-height:1.4;position:relative;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cv-bg{position:absolute;top:0;bottom:0;left:0;width:var(--sidebar-width);background:var(--main)}
+.no-sidebar .cv-bg{display:none}
+.cv-page{border-collapse:collapse;width:100%;position:relative}
+.cv-page td{padding:0;vertical-align:top}
+.page-gap{height:var(--gap)}
+.cv{display:grid;grid-template-columns:var(--sidebar-width) 1fr}
+.no-sidebar .cv{grid-template-columns:1fr}
+.cv-sidebar{color:#f2f5f3;padding:0 7mm}
+.cv-main{padding:0 10mm 0 8mm}
+.no-sidebar .cv-main{padding:0 16mm}
+.photo{display:block;width:38mm;height:38mm;object-fit:cover;border-radius:50%;margin:0 auto 6mm;border:3px solid rgba(255,255,255,.6)}
+.cv-header h1{margin:0;font-size:24pt;font-weight:300;color:var(--main);letter-spacing:.5px}
+.cv-header .headline{font-size:11pt;color:var(--accent);margin:1mm 0 4mm;text-transform:uppercase;letter-spacing:1.5px}
+h2{font-size:12pt;font-weight:700;color:var(--accent);margin:5mm 0 2.5mm;padding-bottom:1mm;
+  border-bottom:1px solid #ccd5cf;break-after:avoid;page-break-after:avoid}
+.cv-sidebar h2{color:#fff;border-bottom-color:rgba(255,255,255,.35);font-size:11pt}
+a{color:inherit;text-decoration:none}
+.cv-main a{color:var(--accent)}
+p{margin:0 0 1.5mm}
+ul{margin:1mm 0 0;padding-left:4.5mm}
+li{margin-bottom:.8mm}
+.entry{break-inside:avoid;page-break-inside:avoid;margin-bottom:3mm}
+.cv-main .entry.experience,.cv-main .entry.education,.cv-main .entry.normal{display:grid;grid-template-columns:24mm 1fr;column-gap:4mm}
+.cv-main .no-dates .entry{display:block}
+.no-dates .when{display:none}
+.when{color:var(--accent);font-size:8.5pt;font-weight:700;padding-top:.5mm}
+.head{font-weight:700}
+.sub{color:var(--muted);font-style:italic;font-size:8.8pt;margin-bottom:1mm}
+.cv-sidebar .sub{color:rgba(255,255,255,.75)}
+.cv-sidebar .entry{margin-bottom:2.5mm;font-size:8.8pt}
+.cv-main .entry.text p{padding-left:5mm;text-indent:-5mm}
+.cv-main .s-profile .entry.text p{padding-left:0;text-indent:0}
+.cv-main .intro,.cv-main .s-profile p{font-style:normal}
+.intro{color:var(--muted);font-style:italic}
+.cv-sidebar .intro{color:rgba(255,255,255,.8)}
+.contact{list-style:none;padding:0;margin:0}
+.contact li{display:flex;align-items:center;gap:2.5mm;margin-bottom:1.6mm;word-break:break-word}
+.ic{width:4mm;height:4mm;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.cv-sidebar .ic{stroke:#a9d8bb}
+.ic.brand{fill:currentColor;stroke:none;width:3.6mm;height:3.6mm}
+.cv-sidebar .ic.brand{fill:#a9d8bb}
+.bullets{padding-left:4mm}
+h3{font-size:10pt;font-weight:700;color:var(--main);margin:3.5mm 0 2mm;break-after:avoid;page-break-after:avoid}
+.cv-sidebar h3{color:#fff}
+@page{size:A4;margin:0}
+@media print{html{background:none}body{margin:0;min-height:0}.cv-bg{position:fixed}}
+@media screen{body{box-shadow:0 2px 12px rgba(0,0,0,.25);margin:8mm auto}}

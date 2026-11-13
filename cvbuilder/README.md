@@ -6,6 +6,9 @@ degree, course and publication once, as notes with labels. *Variant* notes then
 choose which sections appear, in which order, in the main column or the sidebar,
 and which entries they include (by tag, year or maximum count).
 
+![](featured.png)
+
+
 For each variant you get:
 
 - an **HTML CV** with a live preview, **Print / PDF**, and **Save HTML**;
@@ -18,22 +21,28 @@ For each variant you get:
 
 ## Setup
 
-The CV builder is a single widget script. It creates everything else itself.
+The CV builder is one widget script plus optional template files. The script
+creates the CV tree itself.
 
 1. Create a note of type **Code**, set the language to **JS frontend**, and paste
    the contents of [`cv-builder.js`](cv-builder.js) into it.
 2. Add the label `#widget` to that note.
 3. Reload Trilium (`Ctrl+R`).
+4. Open the new `CV` note, click **Build CV…**, then **Import template…**, and
+   select the `.css` files from the [`templates`](templates) folder (download
+   them first). You can select several at once.
 
-On first load, the widget creates a `CV` note with example content as a child of
-the script note. That note holds a profile, sections (experience, education,
-publications, courses, skills, languages, interests), three variants and three
-templates. You can move the `CV` note anywhere; everything is found by label.
+On first load (step 3), the widget creates a `CV` note with example content as a
+child of the script note. That note holds a profile, sections (experience,
+education, publications, courses, skills, languages, interests), three variants
+and an empty *Templates* folder. You can move the `CV` note anywhere; everything
+is found by label.
 
 Open the `CV` note: a **Build CV…** button appears at the top. Click it, pick a
-variant, and export. Other notes don't show the button. Then replace the example
-content with your own, or import your publications from Zotero (see
-[Importing from Zotero](#importing-from-zotero)).
+variant, and export. Other notes don't show the button. Until you import a
+template, the preview uses a plain fallback style and shows a warning. Then
+replace the example content with your own, or import your publications from
+Zotero (see [Importing from Zotero](#importing-from-zotero)).
 
 To add a photo, create an image note and add a `~photo` relation from the
 *Profile* note to it.
@@ -45,9 +54,8 @@ To add a photo, create an image note and add a `~photo` relation from the
 
 ### What the setup does on later loads
 
-- **A CV tree exists** (a note labelled `#cvRoot`): the widget only adds
-  template notes that are missing (for example after an update that brings a new
-  template). It never changes your notes.
+- **A CV tree exists** (a note labelled `#cvRoot`): nothing. The widget never
+  changes your notes.
 - **No CV tree:** after the first setup, the script note gets the label
   `#cvSetupDone`, so deleting the `CV` tree does not bring the example tree back.
   To start over with a fresh example tree, remove `#cvSetupDone` from the script
@@ -71,7 +79,7 @@ CV                         #cvRoot
 │   ├── Full CV (EN)       #cvVariant (JSON code note)
 │   ├── Short CV (NL, business)
 │   └── Research CV (EN, design)
-└── Templates              #cvTemplates
+└── Templates              #cvTemplates (filled with Import template…)
     ├── modern.css         #cvTemplate=modern (CSS code note, editable)
     ├── design.css         #cvTemplate=design
     └── business.css       #cvTemplate=business
@@ -279,21 +287,32 @@ A variant is a JSON code note labelled `#cvVariant`:
 
 ## Templates
 
-The HTML look comes from CSS code notes under *Templates*, each labelled
-`#cvTemplate=<name>`. A variant picks one with `"template": "<name>"`; the
-default is `modern`. The setup creates three:
+The HTML look comes from CSS code notes in the CV tree's *Templates* folder,
+each labelled `#cvTemplate=<name>`. A variant picks one with
+`"template": "<name>"`; the default is `modern`. The [`templates`](templates)
+folder of this repository has three:
 
 | Template | Look |
 | --- | --- |
-| `modern` | Dark green sidebar on the left, accent-coloured headings; modelled on the Quarto `modern2-cv` layout. |
-| `design` | Light editorial layout: warm-tinted sidebar on the right, large serif name with an accent block, timeline for dated entries, bullet sections (soft skills) as chips, greyscale photo with an accent offset. |
-| `business` | Conservative corporate layout: navy accent, pale grey sidebar on the left, name above a full-width rule, dates aligned right, passport-style photo. |
+| [`modern`](templates/modern.css) | Dark green sidebar on the left, accent-coloured headings; modelled on the Quarto `modern2-cv` layout. |
+| [`design`](templates/design.css) | Light editorial layout: warm-tinted sidebar on the right, large serif name with an accent block, timeline for dated entries, bullet sections as chips, greyscale photo with an accent offset. |
+| [`business`](templates/business.css) | Conservative corporate layout: navy accent, pale grey sidebar on the left, name above a full-width rule, dates aligned right, passport-style photo. |
 
-Edit them in Trilium; the changes show up the next time you open the builder
-(or click **Reload notes**). If you delete one, it is recreated with the
-default CSS on the next reload; existing template notes are never overwritten.
 The example variants use all three: *Full CV (EN)* uses `modern`, *Short CV
 (NL, business)* uses `business`, and *Research CV (EN, design)* uses `design`.
+
+**Importing.** **Import template…** in the builder adds `.css` files as
+template notes. The file name (without `.css`) becomes the template name, so
+`compact.css` is used with `"template": "compact"`. If the CV tree already has a
+template with that name, you are asked before its CSS is replaced. Labels on the
+existing note (such as `#cvExtends`) are kept. Only the CV tree is searched, so
+template notes elsewhere in Trilium are ignored.
+
+**Editing.** Edit a template note in Trilium; the change shows up the next time
+you open the builder (or click **Reload notes**). Importing the same file again
+overwrites your edits, so keep a copy of a template you changed (or give it a
+new name). A missing template gives a plain fallback style and a warning in the
+builder.
 
 A variant's `style` (`main`, `accent`, `font`, `sidebar_width`) overrides the
 template's own colours. Leave it out to get the template's defaults. The fonts
