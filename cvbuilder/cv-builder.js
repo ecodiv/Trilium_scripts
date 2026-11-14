@@ -390,15 +390,24 @@ function buildEntry(db, rec, type, ctx) {
 // Normalise one section reference from the variant spec.
 const sectionSpec = (ref) => (typeof ref === "string" ? { section: ref } : { ...ref });
 
-function entryAllowed(e, spec, sec) {
+// Filter one entry. `sec` is the section spec, or a publication group when
+// `parent` (the group's section spec) is given. include_tags / exclude_tags /
+// strict_tags resolve from the most specific level that sets them: group, then
+// section, then variant. An explicit [] or false at a lower level overrides
+// the level above (so "include_tags": [] turns the filter off there).
+// skipTags: only apply hide/since/until (used for a section whose groups apply
+// the tag filters themselves).
+function entryAllowed(e, spec, sec, parent = {}, skipTags = false) {
   const hide = (spec.hide || []).map(String);
   if (hide.includes(e.id) || (e.cvId && hide.includes(e.cvId))) return false;
-  const include = (sec.include_tags || spec.include_tags || []).map((t) => t.toLowerCase());
-  const exclude = (sec.exclude_tags || spec.exclude_tags || []).map((t) => t.toLowerCase());
+  if (skipTags) return !(sec.since && e.year != null && e.year < Number(sec.since)) && !(sec.until && e.year != null && e.year > Number(sec.until));
+  const pick = (name) => (sec[name] ?? parent[name] ?? spec[name]);
+  const include = (pick("include_tags") || []).map((t) => String(t).toLowerCase());
+  const exclude = (pick("exclude_tags") || []).map((t) => String(t).toLowerCase());
   if (exclude.some((t) => e.tags.includes(t))) return false;
-  // Untagged entries pass an include filter unless the variant sets strict_tags.
+  // Untagged entries pass an include filter unless strict_tags applies.
   if (include.length && !include.some((t) => e.tags.includes(t))) {
-    if (e.tags.length || spec.strict_tags) return false;
+    if (e.tags.length || pick("strict_tags") === true) return false;
   }
   if (sec.since && e.year != null && e.year < Number(sec.since)) return false;
   if (sec.until && e.year != null && e.year > Number(sec.until)) return false;
@@ -418,7 +427,7 @@ const pickTitle = (t, lang) => (t && typeof t === "object" ? t[lang] || t.en || 
 //   groups = [ { title, types: [...] | "*", since, until, max, sort }, ... ]
 // "*" collects entries not claimed by an earlier group. Each entry lands in the
 // first group that claims it; entries matched by no group are left out.
-function groupEntries(entries, groups, spec, lang, warnings, key) {
+function groupEntries(entries, groups, spec, lang, warnings, key, secSpec) {
   const heading = (t) => (PUB_TYPES[t] ? PUB_TYPES[t][lang] || PUB_TYPES[t].en : t || "Other");
   let defs = groups;
   if (groups === "by_type") {
@@ -435,7 +444,7 @@ function groupEntries(entries, groups, spec, lang, warnings, key) {
     for (const t of types || []) if (t && !PUB_TYPES[t]) warnings.push(`Section "${key}": unknown publication type "${t}".`);
     let list = entries.filter((e) => !claimed.has(e.id) && (types === null || types.includes(e.pubType || "")));
     list.forEach((e) => claimed.add(e.id));
-    list = list.filter((e) => entryAllowed(e, spec, g));
+    list = list.filter((e) => entryAllowed(e, spec, g, secSpec));
     if (g.sort === "date") list.sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
     if (g.max) list = list.slice(0, Number(g.max));
     const title = pickTitle(g.title, lang) || (types && types.length === 1 ? heading(types[0]) : "");
@@ -508,10 +517,23 @@ function buildModel(tree, spec) {
       .map((id) => db[id])
       .filter((c) => c && !isTextVariant(c) && !hasLabel(c, "cvOutput") && !hasLabel(c, "cvDisabled"))
       .map((c) => buildEntry(db, c, type, sctx))
-      .filter((e) => entryAllowed(e, spec, sec));
+      // With a list of groups, each group applies the tag filters (inheriting
+      // the section's and variant's), so a group can relax them.
+      .filter((e) => entryAllowed(e, spec, sec, {}, Array.isArray(sec.groups)));
     if ((sec.sort || l.labels.cvSort) === "date") entries.sort((a, b) => sortKey(b).localeCompare(sortKey(a)));
-    if (sec.max) entries = entries.slice(0, Number(sec.max));
-    const groups = sec.groups ? groupEntries(entries, sec.groups, spec, lang, warnings, key) : null;
+    const listGroups = Array.isArray(sec.groups);
+    if (sec.max && !listGroups) entries = entries.slice(0, Number(sec.max));
+    let groups = sec.groups ? groupEntries(entries, sec.groups, spec, lang, warnings, key, sec) : null;
+    // With a list of groups the tag filters run per group, so the section's
+    // max is applied afterwards, as a total across groups in display order.
+    if (groups && listGroups && sec.max) {
+      let left = Number(sec.max);
+      groups = groups.map((g) => {
+        const kept = g.entries.slice(0, Math.max(left, 0));
+        left -= kept.length;
+        return { ...g, entries: kept };
+      }).filter((g) => g.entries.length);
+    }
     if (groups) entries = groups.flatMap((g) => g.entries);
     return {
       key, slot, kind: "entries", type,
@@ -1043,6 +1065,11 @@ async function importTemplates() {
  * Build pipeline (pure: tree + variant id -> outputs)
  * ────────────────────────────────────────────────────────────────────────── */
 
+// Template names (#cvTemplate) in the CV tree, sorted.
+function listTemplates(tree) {
+  return [...new Set(Object.values(tree.notes).map((r) => label(r, "cvTemplate")).filter(Boolean))].sort();
+}
+
 function listVariants(tree) {
   return Object.values(tree.notes).filter((r) => hasLabel(r, "cvVariant")).map((r) => ({ id: r.noteId, title: r.title }));
 }
@@ -1077,7 +1104,9 @@ p{margin:0 0 1.5mm}ul{margin:1mm 0 0;padding-left:5mm}a{color:#235}
 @page{size:A4;margin:12mm}@media print{body{margin:0}}
 `;
 
-function buildVariant(tree, variantId) {
+// templateName comes from the builder's template dropdown, not the variant: the
+// same CV content can be rendered in any template.
+function buildVariant(tree, variantId, templateName) {
   const rec = tree.notes[variantId];
   let spec;
   try {
@@ -1086,10 +1115,11 @@ function buildVariant(tree, variantId) {
     throw new Error(`Variant "${rec.title}" is not valid JSON: ${error.message}`);
   }
   const model = buildModel(tree, spec);
-  const templateName = spec.template || "modern";
-  let css = templateCss(tree, templateName);
+  let css = templateName ? templateCss(tree, templateName) : null;
   if (css == null) {
-    model.warnings.push(`No template "${templateName}" in this CV tree; using a plain fallback style. Add it with "Import template…" (${templateName}.css from the templates folder of the cv-builder repository).`);
+    model.warnings.push(templateName
+      ? `Template "${templateName}" not found in this CV tree; using a plain fallback style.`
+      : `No templates in this CV tree yet; using a plain fallback style. Add them with "Import template…" (the .css files in the templates folder of the cv-builder repository).`);
     css = FALLBACK_CSS;
   }
   const html = renderHtml(model, css);
@@ -1183,6 +1213,36 @@ async function openBuilder() {
     o.textContent = v.title;
     select.append(o);
   }
+  select.title = "Variant: which content, in which order";
+
+  // Template dropdown. The last choice is remembered per browser profile in
+  // localStorage (wrapped in try/catch: storage can be unavailable).
+  const TEMPLATE_KEY = "cvBuilder.template";
+  const templateSelect = document.createElement("select");
+  templateSelect.className = "form-control form-control-sm";
+  templateSelect.style.cssText = "width:auto;min-width:140px;";
+  templateSelect.title = "Template: how the CV looks";
+  const fillTemplates = () => {
+    const names = listTemplates(tree);
+    let wanted = templateSelect.value;
+    if (!wanted) { try { wanted = localStorage.getItem(TEMPLATE_KEY) || ""; } catch (e) { wanted = ""; } }
+    templateSelect.innerHTML = "";
+    if (!names.length) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "(no templates)";
+      templateSelect.append(o);
+      return;
+    }
+    for (const n of names) {
+      const o = document.createElement("option");
+      o.value = n;
+      o.textContent = n;
+      templateSelect.append(o);
+    }
+    templateSelect.value = names.includes(wanted) ? wanted : names.includes("modern") ? "modern" : names[0];
+  };
+  fillTemplates();
   const mkButton = (text, primary) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -1202,7 +1262,7 @@ async function openBuilder() {
   storeBtn.title = "Write the HTML as a child note of the variant";
   const spacer = document.createElement("span");
   spacer.style.flex = "1";
-  bar.append(titleEl, select, reloadBtn, importBtn, templateBtn, spacer, printBtn, htmlBtn, storeBtn, closeBtn);
+  bar.append(titleEl, select, templateSelect, reloadBtn, importBtn, templateBtn, spacer, printBtn, htmlBtn, storeBtn, closeBtn);
 
   const warn = document.createElement("div");
   warn.style.cssText = "font-size:0.85em;color:var(--muted-text-color,#a60);white-space:pre-line;";
@@ -1216,7 +1276,7 @@ async function openBuilder() {
   let current = null;
   const rebuild = () => {
     try {
-      current = buildVariant(tree, select.value);
+      current = buildVariant(tree, select.value, templateSelect.value || null);
       frame.srcdoc = current.html;
       warn.textContent = current.model.warnings.join("\n");
     } catch (error) {
@@ -1235,12 +1295,17 @@ async function openBuilder() {
   document.addEventListener("keydown", onKey, true);
 
   select.addEventListener("change", rebuild);
+  templateSelect.addEventListener("change", () => {
+    try { localStorage.setItem(TEMPLATE_KEY, templateSelect.value); } catch (e) { /* storage unavailable */ }
+    rebuild();
+  });
   closeBtn.addEventListener("click", close);
   const reload = async () => {
     try {
       const fresh = await loadCvTree();
       if (fresh.error) throw new Error(fresh.error);
       tree = fresh;
+      fillTemplates(); // picks up imported or deleted templates
       rebuild();
     } catch (error) {
       api.showError(error.message);
@@ -1301,7 +1366,7 @@ const SETUP_TREE = {
     "<p>Single source for your CV variants. Click <strong>Build CV…</strong> above to preview and export a variant.</p>" +
     "<ul><li><strong>Profile</strong>: name, contact labels and your profile text. Child notes with <code>#cvTranslation</code> or <code>#cvFocus</code> hold alternative texts.</li>" +
     "<li><strong>Sections</strong>: one note per section, one child note per entry. The labels on the example entries show which fields each type uses.</li>" +
-    "<li><strong>Variants</strong>: JSON notes choosing sections, order, filters, language and template.</li>" +
+    "<li><strong>Variants</strong>: JSON notes choosing sections, order, filters and language. The look is picked separately in the builder's template dropdown.</li>" +
     "<li><strong>Templates</strong>: CSS notes for the HTML look. Add them with <strong>Import template…</strong> in the builder (the .css files in the templates folder of the cv-builder repository).</li></ul>" +
     "<p>Replace the example content with your own. Publications can be imported from Zotero (CSL JSON) with <strong>Import Zotero…</strong> in the builder.</p>",
   profile: {
@@ -1346,17 +1411,17 @@ const SETUP_TREE = {
   ],
   variants: [
     { title: "Full CV (EN)", spec: {
-      lang: "en", template: "modern", highlight: ["Your Name"],
+      lang: "en", highlight: ["Your Name"],
       main: ["profile", "experience", { section: "publications", groups: "by_type" }],
       sidebar: ["contact", "education", "courses", "skills", "languages", "interests"],
     } },
-    { title: "Short CV (NL, business)", spec: {
-      lang: "nl", template: "business", highlight: ["Your Name"],
+    { title: "Short CV (NL)", spec: {
+      lang: "nl", highlight: ["Your Name"],
       main: ["profile", { section: "experience", since: 2018 }, { section: "publications", max: 5, intro: false }],
       sidebar: ["contact", "education", "skills", "languages"],
     } },
-    { title: "Research CV (EN, design)", spec: {
-      lang: "en", template: "design", focus: ["research"], highlight: ["Your Name"],
+    { title: "Research CV (EN)", spec: {
+      lang: "en", focus: ["research"], highlight: ["Your Name"],
       main: ["profile", "experience", { section: "publications", groups: [
         { title: "Peer-reviewed", types: ["journalArticle", "conferencePaper", "bookSection"] },
         { title: "Other", types: "*" }] }],
@@ -1423,7 +1488,7 @@ async function ensureSetup(scriptNoteId) {
       note.setLabel("cvVariant");
     }
     const templates = await textNote(root.noteId, "Templates",
-      "<p>CSS code notes labelled <code>#cvTemplate=&lt;name&gt;</code>, chosen by a variant with <code>\"template\": \"&lt;name&gt;\"</code>. " +
+      "<p>CSS code notes labelled <code>#cvTemplate=&lt;name&gt;</code>, chosen in the template dropdown of the builder. " +
       "Add or update them with <strong>Import template…</strong> in the builder. Add <code>#cvExtends=&lt;other&gt;</code> to build on another template.</p>",
       "bx bx-palette");
     templates.setLabel("cvTemplates");

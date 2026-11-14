@@ -32,7 +32,7 @@ and an empty *Templates* folder. You can move the `CV` note anywhere; everything
 is found by label.
 
 Open the `CV` note: a **Build CV…** button appears at the top. Click it, pick a
-variant, and export. Other notes don't show the button. Until you import a
+variant (the content) and a template (the look), and export. Other notes don't show the button. Until you import a
 template, the preview uses a plain fallback style and shows a warning. Then
 replace the example content with your own, or import your publications from
 Zotero (see [Importing from Zotero](#importing-from-zotero)).
@@ -70,8 +70,8 @@ CV                         #cvRoot
 │   └── …
 ├── Variants
 │   ├── Full CV (EN)       #cvVariant (JSON code note)
-│   ├── Short CV (NL, business)
-│   └── Research CV (EN, design)
+│   ├── Short CV (NL)
+│   └── Research CV (EN)
 └── Templates              #cvTemplates (filled with Import template…)
     ├── modern.css         #cvTemplate=modern (CSS code note, editable)
     ├── design.css         #cvTemplate=design
@@ -133,8 +133,10 @@ To combine types into your own subsections, list them:
   `"types": "*"` collects everything not matched by an earlier group.
   Publications that match no group are left out, and the builder warns about
   them.
-- A group can have its own `since`, `until`, `max`, `sort` and tag filters. These
-  apply after the section-level ones.
+- A group can have its own `since`, `until`, `max`, `sort` and tag filters
+  (`include_tags`, `exclude_tags`, `strict_tags`). The group's tag filters take
+  precedence over the section's and the variant's (see
+  [Filtering by tags](#filtering-by-tags)).
 - `title` can be a plain string or one string per language. If a group has a
   single type and no title, the type's heading is used.
 
@@ -239,7 +241,6 @@ A variant is a JSON code note labelled `#cvVariant`:
   "lang": "nl",
   "focus": ["teaching"],
   "profile_focus": ["research"],
-  "template": "modern",
   "headline": "Optional headline override",
   "style": { "main": "#274232", "accent": "#157F3F", "font": "Lato", "sidebar_width": "34%" },
   "include_tags": ["geo", "teaching"],
@@ -261,20 +262,68 @@ A variant is a JSON code note labelled `#cvVariant`:
 - `main` and `sidebar` list section keys (`#cvKey`), in display order. `profile`
   and `contact` are built-in sections that read from the Profile note. If
   `sidebar` is left out, you get a single-column layout.
-- Tag filters: entries without tags always pass `include_tags` unless
-  `strict_tags` is `true`. You can also set `include_tags` and `exclude_tags` on a
-  single section.
+- Tag filters: see [Filtering by tags](#filtering-by-tags).
 - Per-section options: `since`, `until`, `max`, `sort` (`"date"`), `title`
   (a string, or one string per language), `focus`, `groups` (see
   [Publications](#publications)), and `intro` (`false` hides the section note's
-  intro text), plus tag filters.
+  intro text), plus the tag filters `include_tags`, `exclude_tags` and
+  `strict_tags`.
+
+### Filtering by tags
+
+Give entries tags with `#tags=teaching,geo` (comma-separated, case-insensitive).
+
+- `include_tags`: keep entries that have **at least one** of these tags.
+  Entries **without** tags are kept as well, so general content shows up in every
+  variant.
+- `strict_tags: true`: entries without tags are dropped too; only entries with a
+  matching tag remain. It only has an effect where an `include_tags` list
+  applies.
+- `exclude_tags`: drop entries that have any of these tags. This wins over
+  `include_tags`.
+
+| Entry's `#tags` | `"include_tags": ["geo","teaching"]` | plus `"strict_tags": true` |
+| --- | --- | --- |
+| `geo,research` | shown | shown |
+| `consultancy` | hidden | hidden |
+| *(none)* | shown | hidden |
+
+All three settings can be set on the variant, on a section, and on a
+publication group. The most specific level that sets one wins: group, then
+section, then variant. Lists are replaced, not merged, and an explicit value
+overrides the level above: `"include_tags": []` turns the filter off for that
+section or group, and `"strict_tags": false` makes it lenient again.
+
+```json
+"include_tags": ["teaching"],
+"main": [
+  "experience",
+  { "section": "publications", "include_tags": ["teaching", "geo"], "strict_tags": true, "groups": [
+    { "title": "Articles", "types": ["journalArticle"] },
+    { "title": "Other", "types": "*", "strict_tags": false }
+  ] }
+]
+```
+
+Here *Experience* shows untagged jobs plus jobs tagged `teaching`. Under
+*Publications*, the *Articles* group only shows articles tagged `teaching` or
+`geo`, while the *Other* group also shows untagged items.
+
+Filters are applied before `max`, so `"max": 5` gives the first five entries
+that pass. For a section with a list of groups, the section's `max` is a total
+across the groups, counted in display order.
+
+Entries imported from Zotero have no tags. Add `#tags` to them in Trilium to
+filter them; a re-import keeps those tags.
 
 ## Templates
 
 The HTML look comes from CSS code notes in the CV tree's *Templates* folder,
-each labelled `#cvTemplate=<name>`. A variant picks one with
-`"template": "<name>"`; the default is `modern`. The [`templates`](templates)
-folder of this repository has three:
+each labelled `#cvTemplate=<name>`. You pick one in the **template dropdown**
+next to the variant dropdown, so any variant can be shown in any template. The
+builder remembers your last choice (per computer); the first time it picks
+`modern` if present. The [`templates`](templates) folder of this repository has
+three:
 
 | Template | Look |
 | --- | --- |
@@ -282,12 +331,9 @@ folder of this repository has three:
 | [`design`](templates/design.css) | Light editorial layout: warm-tinted sidebar on the right, large serif name with an accent block, timeline for dated entries, bullet sections as chips, greyscale photo with an accent offset. |
 | [`business`](templates/business.css) | Conservative corporate layout: navy accent, pale grey sidebar on the left, name above a full-width rule, dates aligned right, passport-style photo. |
 
-The example variants use all three: *Full CV (EN)* uses `modern`, *Short CV
-(NL, business)* uses `business`, and *Research CV (EN, design)* uses `design`.
-
 **Importing.** **Import template…** in the builder adds `.css` files as
-template notes. The file name (without `.css`) becomes the template name, so
-`compact.css` is used with `"template": "compact"`. If the CV tree already has a
+template notes. The file name (without `.css`) becomes the template name shown in
+the dropdown, so `compact.css` appears as `compact`. If the CV tree already has a
 template with that name, you are asked before its CSS is replaced. Labels on the
 existing note (such as `#cvExtends`) are kept. Only the CV tree is searched, so
 template notes elsewhere in Trilium are ignored.
@@ -295,8 +341,8 @@ template notes elsewhere in Trilium are ignored.
 **Editing.** Edit a template note in Trilium; the change shows up the next time
 you open the builder (or click **Reload notes**). Importing the same file again
 overwrites your edits, so keep a copy of a template you changed (or give it a
-new name). A missing template gives a plain fallback style and a warning in the
-builder.
+new name). Without any template, the builder uses a plain fallback style and
+shows a warning.
 
 A variant's `style` (`main`, `accent`, `font`, `sidebar_width`) overrides the
 template's own colours. Leave it out to get the template's defaults. The fonts
